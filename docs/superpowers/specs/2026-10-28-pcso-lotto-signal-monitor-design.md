@@ -170,7 +170,7 @@ The pre-declared version-1 protocol is:
 
 - The primary metric is mean matched balls per prediction on alert-eligible draw days.
 - A method's daily signal score is the normalized margin between its chosen combination and the median score of 10,000 seeded, uniformly sampled valid combinations evaluated with the same frozen scoring function and same pre-draw features.
-- A draw is alert-eligible when that score meets or exceeds a threshold fixed at the method's 85th training-period percentile. The threshold is frozen before the evaluation period.
+- The first 100 chronological predictions per game-method version are the immutable training period. A later draw is alert-eligible when its score meets or exceeds the method's 85th-percentile training threshold. The training cutoff and threshold are persisted and never move when future draws are appended.
 - A method needs at least 200 total walk-forward predictions and at least 30 alert-eligible evaluation predictions for that game.
 - Significance is a one-sided seeded randomization test against equal-budget random lines on the same eligible draw dates.
 - Holm-Bonferroni correction controls family-wise error at 0.01 across all game-method hypotheses in the versioned experiment family.

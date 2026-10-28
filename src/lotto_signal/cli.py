@@ -21,7 +21,9 @@ from .workflow import (
 
 
 MANILA = ZoneInfo("Asia/Manila")
-HANDLED_STATUSES = frozenset({"ok", "stale_source", "source_error"})
+HANDLED_STATUSES = frozenset(
+    {"ok", "pending_source", "stale_source", "source_error"}
+)
 
 
 def report_exit_code(status: str) -> int:

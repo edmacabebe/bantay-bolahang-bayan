@@ -16,6 +16,14 @@ class GateDecision:
     signal_score: float
     alert_threshold: float
     checks: Mapping[str, bool]
+    total_predictions: int = 0
+    alert_predictions: int = 0
+    p_value: float = 1.0
+    effect_size: float = 0.0
+    first_half_effect: float = 0.0
+    second_half_effect: float = 0.0
+    random_strategies: int = 0
+    random_lines_per_strategy: int = 0
 
 
 def holm_bonferroni(
@@ -76,4 +84,12 @@ def evaluate_gate(
         signal_score=current.signal_score,
         alert_threshold=summary.alert_threshold,
         checks=immutable_checks,
+        total_predictions=summary.total_predictions,
+        alert_predictions=len(summary.alert_outcomes),
+        p_value=summary.p_value,
+        effect_size=summary.effect_size,
+        first_half_effect=summary.first_half_effect,
+        second_half_effect=summary.second_half_effect,
+        random_strategies=len(summary.random_strategy_means),
+        random_lines_per_strategy=summary.random_lines_per_strategy,
     )

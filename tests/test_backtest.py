@@ -11,7 +11,14 @@ from lotto_signal.methods import Candidate
 
 
 def make_draw(index: int, numbers: tuple[int, ...] = (1, 2, 3, 4, 5, 6)) -> DrawRecord:
-    day = date(2025, 1, 1) + timedelta(days=index * 2)
+    day = date(2025, 1, 1)
+    scheduled_seen = -1
+    while scheduled_seen < index:
+        if day.weekday() in GAMES["LOTTO42"].draw_weekdays:
+            scheduled_seen += 1
+            if scheduled_seen == index:
+                break
+        day += timedelta(days=1)
     return DrawRecord(
         draw_id=f"LOTTO42S{index:07d}",
         game_code="LOTTO42",
@@ -51,11 +58,13 @@ def small_config() -> BacktestConfig:
         random_strategies=100,
         alert_percentile=0.85,
         family_alpha=0.01,
+        training_predictions=2,
     )
 
 
 def test_default_backtest_config_freezes_the_full_25_hypothesis_family() -> None:
     assert BacktestConfig().family_hypotheses == 25
+    assert BacktestConfig().training_predictions == 100
 
 
 def test_walk_forward_uses_only_strictly_prior_draws_and_scores_matches() -> None:
@@ -93,3 +102,24 @@ def test_mutating_future_draw_cannot_change_earlier_backtest_outcomes() -> None:
     assert first.methods["fixed_v1"].outcomes[:-1] == second.methods["fixed_v1"].outcomes[:-1]
     assert first.methods["fixed_v1"].outcomes[-1].matched == 6
     assert second.methods["fixed_v1"].outcomes[-1].matched == 0
+
+
+def test_appending_future_draws_cannot_move_frozen_threshold_or_prior_alerts() -> None:
+    first = walk_forward(
+        GAMES["LOTTO42"],
+        [make_draw(index) for index in range(8)],
+        [FixedMethod()],
+        small_config(),
+    ).methods["fixed_v1"]
+    extended = walk_forward(
+        GAMES["LOTTO42"],
+        [make_draw(index) for index in range(12)],
+        [FixedMethod()],
+        small_config(),
+    ).methods["fixed_v1"]
+
+    assert first.alert_threshold == extended.alert_threshold
+    assert first.training_predictions == extended.training_predictions == 2
+    assert first.training_cutoff_draw_id == extended.training_cutoff_draw_id
+    assert first.frozen_before_evaluation is True
+    assert first.alert_outcomes == extended.alert_outcomes[: len(first.alert_outcomes)]

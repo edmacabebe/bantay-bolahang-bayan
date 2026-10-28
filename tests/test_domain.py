@@ -64,6 +64,8 @@ def test_draw_preserves_published_order_and_derives_sorted_numbers() -> None:
         ({"published_numbers": (1, 2, 3, 4, 5, 5)}, "unique"),
         ({"published_numbers": (1, 2, 3, 4, 5, 43)}, "1..42"),
         ({"retrieved_at": datetime(2026, 10, 16, 1)}, "timezone-aware"),
+        ({"draw_time": "21:00:00"}, "draw_time must include a timezone"),
+        ({"draw_date": date(2026, 10, 16)}, "scheduled weekday"),
         ({"game_code": "UNKNOWN"}, "unknown game"),
     ],
 )

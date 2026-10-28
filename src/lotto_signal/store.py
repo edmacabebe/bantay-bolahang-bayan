@@ -8,7 +8,13 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .domain import DrawRecord, DrawRevision, MonitorEvent, Prediction
+from .domain import (
+    DrawRecord,
+    DrawRevision,
+    MonitorEvent,
+    Prediction,
+    PredictionOutcome,
+)
 from .games import GAMES
 
 
@@ -17,6 +23,7 @@ class MergeResult:
     inserted: int = 0
     unchanged: int = 0
     revised: int = 0
+    revised_draw_ids: tuple[str, ...] = ()
 
 
 def _canonical(value: dict[str, Any]) -> str:
@@ -84,11 +91,15 @@ class RepositoryStore:
     def _prediction_path(self, game_code: str) -> Path:
         return self.root / "data" / "predictions" / f"{game_code}.jsonl"
 
+    def _outcome_path(self, game_code: str) -> Path:
+        return self.root / "data" / "outcomes" / f"{game_code}.jsonl"
+
     def merge_draws(self, records: Iterable[DrawRecord]) -> MergeResult:
         grouped: dict[str, list[DrawRecord]] = {}
         for record in records:
             grouped.setdefault(record.game_code, []).append(record)
         inserted = unchanged = revised = 0
+        revised_draw_ids: list[str] = []
         for game_code, incoming in grouped.items():
             original_rows = _read_jsonl(self._draw_path(game_code))
             originals = {
@@ -121,6 +132,7 @@ class RepositoryStore:
                     ):
                         revision_rows.append(revision.to_dict())
                         revised += 1
+                        revised_draw_ids.append(record.draw_id)
                     else:
                         unchanged += 1
                     current[record.draw_id] = record
@@ -137,7 +149,12 @@ class RepositoryStore:
             )
             if revision_rows:
                 _write_jsonl(self._revision_path(game_code), revision_rows)
-        return MergeResult(inserted, unchanged, revised)
+        return MergeResult(
+            inserted,
+            unchanged,
+            revised,
+            tuple(sorted(set(revised_draw_ids))),
+        )
 
     def load_draws(
         self, game_code: str, before: datetime | None = None
@@ -190,6 +207,64 @@ class RepositoryStore:
         )
         _write_jsonl(path, rows)
         return True
+
+    def load_prediction(
+        self, game_code: str, prediction_id: str
+    ) -> Prediction | None:
+        if game_code not in GAMES:
+            raise ValueError(f"unknown game: {game_code}")
+        for row in _read_jsonl(self._prediction_path(game_code)):
+            if row["prediction_id"] == prediction_id:
+                return _prediction_from_dict(row)
+        return None
+
+    def score_completed_predictions(self, scored_at: datetime) -> int:
+        if scored_at.tzinfo is None or scored_at.utcoffset() is None:
+            raise ValueError("scored_at must be timezone-aware")
+        written = 0
+        for game_code in GAMES:
+            draws_by_date: dict[date, list[DrawRecord]] = {}
+            for draw in self.load_draws(game_code):
+                draws_by_date.setdefault(draw.draw_date, []).append(draw)
+            path = self._outcome_path(game_code)
+            rows = _read_jsonl(path)
+            existing_ids = {row["outcome_id"] for row in rows}
+            for prediction_row in _read_jsonl(self._prediction_path(game_code)):
+                prediction = _prediction_from_dict(prediction_row)
+                matching_draws = draws_by_date.get(prediction.target_draw_date, [])
+                if len(matching_draws) != 1:
+                    continue
+                draw = matching_draws[0]
+                outcome_id = ":".join(
+                    (prediction.prediction_id, draw.draw_id, draw.fingerprint)
+                )
+                if outcome_id in existing_ids:
+                    continue
+                outcome = PredictionOutcome(
+                    outcome_id=outcome_id,
+                    prediction_id=prediction.prediction_id,
+                    game_code=game_code,
+                    target_draw_date=prediction.target_draw_date,
+                    draw_id=draw.draw_id,
+                    draw_fingerprint=draw.fingerprint,
+                    predicted_numbers=prediction.numbers,
+                    winning_numbers=draw.sorted_numbers,
+                    matched=len(set(prediction.numbers) & set(draw.sorted_numbers)),
+                    scored_at=scored_at,
+                )
+                rows.append(outcome.to_dict())
+                existing_ids.add(outcome_id)
+                written += 1
+            if rows:
+                rows.sort(
+                    key=lambda row: (
+                        row["target_draw_date"],
+                        row["prediction_id"],
+                        row["draw_fingerprint"],
+                    )
+                )
+                _write_jsonl(path, rows)
+        return written
 
     def write_event(self, event: MonitorEvent) -> bool:
         events_path = self.root / "alerts" / "events.jsonl"

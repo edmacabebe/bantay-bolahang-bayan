@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 from typing import Mapping
 
@@ -21,4 +22,10 @@ GAMES: Mapping[str, GameSpec] = MappingProxyType(
         "GL55": GameSpec("GL55", "Grand Lotto 6/55", 55, frozenset({0, 2, 5})),
         "UL58": GameSpec("UL58", "Ultra Lotto 6/58", 58, frozenset({1, 4, 6})),
     }
+)
+
+# Add only PCSO-documented exceptional draw dates, with a source citation in the
+# commit that introduces each date. Empty by default: ordinary weekday rules apply.
+DRAW_DATE_EXCEPTIONS: Mapping[str, frozenset[date]] = MappingProxyType(
+    {code: frozenset() for code in GAMES}
 )

@@ -103,8 +103,8 @@ def test_seeded_tie_breaking_is_repeatable() -> None:
 
 def test_future_draw_mutation_cannot_change_earlier_candidate() -> None:
     base = [draw("past", date(2026, 10, 10), (1, 2, 3, 4, 5, 6))]
-    future_a = draw("future", date(2026, 10, 21), (7, 8, 9, 10, 11, 12))
-    future_b = draw("future", date(2026, 10, 21), (31, 32, 33, 34, 35, 36))
+    future_a = draw("future", date(2026, 10, 22), (7, 8, 9, 10, 11, 12))
+    future_b = draw("future", date(2026, 10, 22), (31, 32, 33, 34, 35, 36))
     method = METHODS["ensemble_v1"]
 
     candidate_a = method.generate(

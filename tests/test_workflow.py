@@ -9,12 +9,13 @@ from zoneinfo import ZoneInfo
 
 import lotto_signal.workflow as workflow_module
 from lotto_signal.backtest import BacktestConfig, BacktestResult
-from lotto_signal.domain import DrawRecord
+from lotto_signal.domain import DrawRecord, Prediction
 from lotto_signal.features import FeatureSnapshot
 from lotto_signal.gate import GateDecision
 from lotto_signal.games import GAMES, GameSpec
 from lotto_signal.methods import Candidate
 from lotto_signal.pcso import PcsoSourceError
+from lotto_signal.store import RepositoryStore
 from lotto_signal.workflow import (
     RunContext,
     RuntimeConfig,
@@ -144,6 +145,16 @@ def test_ordinary_morning_selects_only_scheduled_games_and_stays_silent(
     assert state["content_digest"]
 
 
+def test_evening_marks_delayed_results_pending_without_notifying(tmp_path: Path) -> None:
+    evening = NOW.replace(hour=22, minute=17)
+
+    report = run_evening(context(tmp_path, FakePcso(), now=evening))
+
+    assert report.status == "pending_source"
+    assert report.source_fresh is False
+    assert report.event_ids == ()
+
+
 def test_first_collection_failure_is_silent_and_repeat_emits_once(
     tmp_path: Path,
 ) -> None:
@@ -152,11 +163,13 @@ def test_first_collection_failure_is_silent_and_repeat_emits_once(
     first = run_evening(context(tmp_path, failing))
     second = run_evening(context(tmp_path, failing, now=NOW + timedelta(days=1)))
     duplicate = run_evening(context(tmp_path, failing, now=NOW + timedelta(days=1)))
+    next_day = run_evening(context(tmp_path, failing, now=NOW + timedelta(days=2)))
 
-    assert first.status == second.status == duplicate.status == "source_error"
+    assert first.status == second.status == duplicate.status == next_day.status == "source_error"
     assert first.event_ids == ()
     assert len(second.event_ids) == 1
     assert duplicate.event_ids == second.event_ids
+    assert next_day.event_ids == second.event_ids
     assert len(inspect_events(tmp_path, None)) == 1
 
 
@@ -198,13 +211,59 @@ def test_official_correction_is_append_only_and_triggers_recomputation_notice(
     assert (tmp_path / "data/revisions/LOTTO42.jsonl").exists()
 
 
+def test_evening_scores_prediction_once_and_versions_corrected_outcome(
+    tmp_path: Path,
+) -> None:
+    latest = healthy_latest()
+    result = next(record for record in latest if record.game_code == "LOTTO42")
+    RepositoryStore(tmp_path).append_prediction(
+        Prediction(
+            prediction_id=f"LOTTO42-{result.draw_date.isoformat()}-ensemble_v1",
+            game_code="LOTTO42",
+            target_draw_date=result.draw_date,
+            method_version="ensemble_v1",
+            numbers=(1, 2, 3, 4, 5, 6),
+            raw_score=1.0,
+            signal_score=1.0,
+            seed=1,
+            created_at=NOW - timedelta(days=1),
+            source_cutoff=NOW - timedelta(days=1),
+            feature_values={},
+        )
+    )
+
+    first = run_evening(context(tmp_path, FakePcso(latest=latest)))
+    duplicate = run_evening(context(tmp_path, FakePcso(latest=latest)))
+    corrected = tuple(
+        draw(record.game_code, record.draw_date, offset=1)
+        if record.game_code == "LOTTO42"
+        else record
+        for record in latest
+    )
+    revised = run_evening(
+        context(tmp_path, FakePcso(latest=corrected), now=NOW + timedelta(hours=1))
+    )
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "data/outcomes/LOTTO42.jsonl").read_text().splitlines()
+    ]
+    assert first.outcomes_written == 1
+    assert duplicate.outcomes_written == 0
+    assert revised.outcomes_written == 1
+    assert [row["matched"] for row in rows] == [6, 5]
+    assert rows[0]["draw_fingerprint"] != rows[1]["draw_fingerprint"]
+
+
 def test_duplicate_morning_is_idempotent_and_predictions_are_immutable(
     tmp_path: Path,
 ) -> None:
     run_morning(context(tmp_path, FakePcso()))
     first_content = (tmp_path / "data/predictions/ML45.jsonl").read_text()
 
-    duplicate = run_morning(context(tmp_path, FakePcso()))
+    duplicate = run_morning(
+        context(tmp_path, FakePcso(), now=NOW + timedelta(hours=2))
+    )
 
     assert duplicate.predictions_written == 0
     assert (tmp_path / "data/predictions/ML45.jsonl").read_text() == first_content
@@ -237,6 +296,7 @@ def test_shadow_mode_suppresses_signal_event_but_records_decision(
     decisions = json.loads((tmp_path / "state/gate_decisions.json").read_text())
     assert decisions["mode"] == "shadow"
     assert {item["eligible"] for item in decisions["decisions"]} == {True}
+    assert all("validation" in item for item in decisions["decisions"])
 
 
 def test_monday_audit_backfills_all_games_and_event_cursor_filters(tmp_path: Path) -> None:
@@ -289,3 +349,68 @@ def test_default_audit_parallelizes_the_five_independent_games(
     run_audit(RunContext(root=tmp_path, pcso=FakePcso(), now=NOW))
 
     assert executor_sizes == [5]
+
+
+def test_live_gate_uses_global_audit_decision_and_current_data_integrity(
+    tmp_path: Path,
+) -> None:
+    game = GAMES["ML45"]
+    draws = (draw("ML45", date(2026, 10, 26)),)
+    current = Candidate(
+        game_code="ML45",
+        method_version="ensemble_v1",
+        numbers=(1, 2, 3, 4, 5, 6),
+        raw_score=2.0,
+        signal_score=2.0,
+        seed=1,
+    )
+    evidence = {
+        "total_predictions": 250,
+        "alert_predictions": 40,
+        "alert_threshold": 1.5,
+        "p_value": 0.0001,
+        "corrected_significant": False,
+        "effect_size": 0.4,
+        "first_half_effect": 0.3,
+        "second_half_effect": 0.25,
+        "frozen_before_evaluation": True,
+        "random_strategies": 10_000,
+        "random_lines_per_strategy": 40,
+    }
+    audit = {
+        "draw_digests": {"ML45": workflow_module._draw_digest(draws)},
+        "evidence": {"ML45:ensemble_v1": evidence},
+    }
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state/audit.json").write_text(json.dumps(audit))
+
+    locally_tempting = workflow_module._decision_from_audit(
+        tmp_path, game, draws, current
+    )
+    assert locally_tempting.eligible is False
+    assert locally_tempting.checks["corrected_significance"] is False
+
+    evidence["corrected_significant"] = True
+    audit["draw_digests"]["ML45"] = "outdated"
+    (tmp_path / "state/audit.json").write_text(json.dumps(audit))
+    changed_data = workflow_module._decision_from_audit(tmp_path, game, draws, current)
+    assert changed_data.eligible is False
+    assert changed_data.checks["data_resolved"] is False
+
+    audit["draw_digests"]["ML45"] = workflow_module._draw_digest(draws)
+    (tmp_path / "state/audit.json").write_text(json.dumps(audit))
+    passing = workflow_module._decision_from_audit(tmp_path, game, draws, current)
+    assert passing.eligible is True
+    assert passing.total_predictions == 250
+    assert passing.alert_predictions == 40
+
+
+def test_weekly_audit_detects_newly_passing_and_lost_gate_posture() -> None:
+    failed = {"LOTTO42:ensemble_v1": {"sample": True, "significant": False}}
+    passed = {"LOTTO42:ensemble_v1": {"sample": True, "significant": True}}
+
+    gained = workflow_module._gate_transitions(failed, passed)
+    lost = workflow_module._gate_transitions(passed, failed)
+
+    assert gained == (("LOTTO42:ensemble_v1", "newly_passing"),)
+    assert lost == (("LOTTO42:ensemble_v1", "lost_signal"),)

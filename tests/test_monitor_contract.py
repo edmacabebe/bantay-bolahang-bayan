@@ -16,6 +16,7 @@ def test_prompt_names_public_state_paths_timezone_and_low_cost_model() -> None:
     text = prompt_text()
 
     assert "alerts/latest.json" in text
+    assert "alerts/events.jsonl" in text
     assert "state/last_run.json" in text
     assert "Asia/Manila" in text
     assert "GPT-6 Luna" in text
@@ -30,6 +31,7 @@ def test_prompt_is_silent_for_unchanged_shadow_or_ordinary_state() -> None:
     assert "shadow" in text and "suppress" in text
     assert "no event" in text and "remain silent" in text
     assert "one notification" in text
+    assert "all events after" in text
 
 
 def test_prompt_handles_stale_runs_and_evidence_fields() -> None:

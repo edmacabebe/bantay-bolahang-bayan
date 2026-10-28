@@ -27,6 +27,7 @@ class BacktestConfig:
     alert_percentile: float = 0.85
     family_alpha: float = 0.01
     family_hypotheses: int = 25
+    training_predictions: int = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,8 @@ class MethodBacktestResult:
     second_half_effect: float
     corrected_significant: bool
     frozen_before_evaluation: bool = True
+    training_predictions: int = 0
+    training_cutoff_draw_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +99,7 @@ def _method_summary(
     outcomes: tuple[BacktestOutcome, ...],
     config: BacktestConfig,
 ) -> MethodBacktestResult:
-    training_count = max(1, len(outcomes) // 4) if outcomes else 0
+    training_count = min(config.training_predictions, len(outcomes))
     training = outcomes[:training_count]
     evaluation = outcomes[training_count:]
     threshold = _percentile(
@@ -157,6 +160,12 @@ def _method_summary(
         first_half_effect=first_effect,
         second_half_effect=second_effect,
         corrected_significant=False,
+        frozen_before_evaluation=(
+            training_count == config.training_predictions
+            and len(outcomes) > training_count
+        ),
+        training_predictions=training_count,
+        training_cutoff_draw_id=(training[-1].draw_id if training else None),
     )
 
 

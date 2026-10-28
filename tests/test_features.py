@@ -26,14 +26,14 @@ def draw(draw_id: str, day: date, numbers: tuple[int, ...]) -> DrawRecord:
 
 def history() -> list[DrawRecord]:
     return [
-        draw("old", date(2026, 6, 10), (1, 11, 12, 13, 14, 15)),
+        draw("old", date(2026, 6, 11), (1, 11, 12, 13, 14, 15)),
         draw("middle", date(2026, 9, 10), (1, 2, 7, 8, 9, 10)),
         draw("latest", date(2026, 10, 10), (1, 2, 3, 4, 5, 6)),
     ]
 
 
 def test_features_use_exact_day_windows_and_exclude_cutoff_or_future() -> None:
-    future = draw("future", date(2026, 10, 21), (37, 38, 39, 40, 41, 42))
+    future = draw("future", date(2026, 10, 22), (37, 38, 39, 40, 41, 42))
 
     snapshot = compute_features(history() + [future], GAMES["LOTTO42"], AS_OF)
 

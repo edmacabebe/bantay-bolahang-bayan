@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Mapping
 
-from .games import GAMES
+from .games import DRAW_DATE_EXCEPTIONS, GAMES
 
 
 def _aware(value: datetime, field_name: str) -> None:
@@ -57,6 +57,20 @@ class DrawRecord:
     def __post_init__(self) -> None:
         _validate_numbers(self.game_code, self.published_numbers)
         _aware(self.retrieved_at, "retrieved_at")
+        try:
+            draw_at = datetime.fromisoformat(
+                f"{self.draw_date.isoformat()}T{self.draw_time}"
+            )
+        except ValueError as error:
+            raise ValueError("draw_time must be an ISO-8601 time") from error
+        if draw_at.tzinfo is None or draw_at.utcoffset() is None:
+            raise ValueError("draw_time must include a timezone")
+        game = GAMES[self.game_code]
+        if (
+            self.draw_date.weekday() not in game.draw_weekdays
+            and self.draw_date not in DRAW_DATE_EXCEPTIONS[self.game_code]
+        ):
+            raise ValueError("draw_date is not a scheduled weekday")
         if not self.draw_id:
             raise ValueError("draw_id is required")
         if self.total_winners < 0:
@@ -144,6 +158,43 @@ class Prediction:
             "created_at": self.created_at.isoformat(),
             "source_cutoff": self.source_cutoff.isoformat(),
             "feature_values": _json_safe(self.feature_values),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PredictionOutcome:
+    outcome_id: str
+    prediction_id: str
+    game_code: str
+    target_draw_date: date
+    draw_id: str
+    draw_fingerprint: str
+    predicted_numbers: tuple[int, ...]
+    winning_numbers: tuple[int, ...]
+    matched: int
+    scored_at: datetime
+
+    def __post_init__(self) -> None:
+        _validate_numbers(self.game_code, self.predicted_numbers)
+        _validate_numbers(self.game_code, self.winning_numbers)
+        _aware(self.scored_at, "scored_at")
+        if self.matched != len(
+            set(self.predicted_numbers) & set(self.winning_numbers)
+        ):
+            raise ValueError("matched count does not match outcome numbers")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome_id": self.outcome_id,
+            "prediction_id": self.prediction_id,
+            "game_code": self.game_code,
+            "target_draw_date": self.target_draw_date.isoformat(),
+            "draw_id": self.draw_id,
+            "draw_fingerprint": self.draw_fingerprint,
+            "predicted_numbers": list(self.predicted_numbers),
+            "winning_numbers": list(self.winning_numbers),
+            "matched": self.matched,
+            "scored_at": self.scored_at.isoformat(),
         }
 
 
