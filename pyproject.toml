@@ -13,6 +13,9 @@ dependencies = [
   "httpx>=0.28,<0.29",
 ]
 
+[project.scripts]
+lotto-signal = "lotto_signal.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<9",
