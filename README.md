@@ -13,3 +13,5 @@ Implementation follows the design in `docs/superpowers/specs/2026-10-28-pcso-lot
 The repository includes a GitHub Actions runner for official-result collection at 7:17 AM and 10:17 PM in `Asia/Manila`. The data pipeline is deterministic Python and makes no AI model calls. It commits only auditable files under `data/`, `state/`, and `alerts/`.
 
 Standard GitHub-hosted runners are free for public repositories under GitHub's current allowance. Production research-signal events remain disabled in `config/runtime.json` during the initial live-collection and shadow-evaluation period.
+
+See `docs/operations.md` for manual runs, incident handling, rollout gates, and the Codex-only scheduled monitor. The ready-to-paste monitor instructions are in `codex/monitor-prompt.md`.
