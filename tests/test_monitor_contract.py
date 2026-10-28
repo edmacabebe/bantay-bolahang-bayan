@@ -32,6 +32,7 @@ def test_prompt_is_silent_for_unchanged_shadow_or_ordinary_state() -> None:
     assert "no event" in text and "remain silent" in text
     assert "one notification" in text
     assert "all events after" in text
+    assert "evidence_transition" in text
 
 
 def test_prompt_handles_stale_runs_and_evidence_fields() -> None:

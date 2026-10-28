@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -94,6 +95,17 @@ def test_correction_appends_revision_and_projects_latest_value(tmp_path: Path) -
     assert store.load_draws("LOTTO42")[0].fingerprint == corrected.fingerprint
 
 
+def test_distinct_draw_ids_for_same_game_date_are_rejected(tmp_path: Path) -> None:
+    store = RepositoryStore(tmp_path)
+    first = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))
+    duplicate_date = draw(
+        "LOTTO42S9999", date(2026, 10, 13), (7, 8, 9, 10, 11, 12)
+    )
+
+    with pytest.raises(ValueError, match="duplicate game/date"):
+        store.merge_draws([first, duplicate_date])
+
+
 def test_load_draws_before_cutoff_excludes_same_or_later_draw(tmp_path: Path) -> None:
     store = RepositoryStore(tmp_path)
     first = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))
@@ -175,7 +187,13 @@ def test_sqlite_cache_matches_corrected_projection(tmp_path: Path) -> None:
         retrieved_hour=2,
     )
     store.merge_draws([original, corrected])
-    store.append_prediction(prediction())
+    completed_prediction = replace(
+        prediction(),
+        prediction_id="LOTTO42-2026-10-13-ensemble_v1",
+        target_draw_date=date(2026, 10, 13),
+    )
+    store.append_prediction(completed_prediction)
+    store.score_completed_predictions(datetime(2026, 10, 20, 4, tzinfo=timezone.utc))
 
     cache = tmp_path / "cache.sqlite3"
     store.build_sqlite(cache)
@@ -187,5 +205,13 @@ def test_sqlite_cache_matches_corrected_projection(tmp_path: Path) -> None:
         prediction_count = connection.execute(
             "SELECT COUNT(*) FROM predictions"
         ).fetchone()[0]
+        revision_count = connection.execute(
+            "SELECT COUNT(*) FROM draw_revisions"
+        ).fetchone()[0]
+        outcome_count = connection.execute(
+            "SELECT COUNT(*) FROM prediction_outcomes"
+        ).fetchone()[0]
     assert draw_row == (corrected.fingerprint, "[1,2,3,4,5,7]")
     assert prediction_count == 1
+    assert revision_count == 1
+    assert outcome_count == 1

@@ -24,6 +24,7 @@ class MergeResult:
     unchanged: int = 0
     revised: int = 0
     revised_draw_ids: tuple[str, ...] = ()
+    revision_ids: tuple[str, ...] = ()
 
 
 def _canonical(value: dict[str, Any]) -> str:
@@ -100,6 +101,7 @@ class RepositoryStore:
             grouped.setdefault(record.game_code, []).append(record)
         inserted = unchanged = revised = 0
         revised_draw_ids: list[str] = []
+        revision_ids: list[str] = []
         for game_code, incoming in grouped.items():
             original_rows = _read_jsonl(self._draw_path(game_code))
             originals = {
@@ -110,12 +112,23 @@ class RepositoryStore:
             for row in revision_rows:
                 replacement = _draw_from_dict(row["replacement"])
                 current[replacement.draw_id] = replacement
+            date_to_id = {
+                record.draw_date: record.draw_id for record in current.values()
+            }
             for record in incoming:
+                same_date_id = date_to_id.get(record.draw_date)
+                if same_date_id is not None and same_date_id != record.draw_id:
+                    raise ValueError(
+                        f"duplicate game/date: {game_code} "
+                        f"{record.draw_date.isoformat()} has IDs "
+                        f"{same_date_id} and {record.draw_id}"
+                    )
                 existing = current.get(record.draw_id)
                 if existing is None:
                     originals[record.draw_id] = record
                     current[record.draw_id] = record
                     inserted += 1
+                    date_to_id[record.draw_date] = record.draw_id
                 elif existing.fingerprint == record.fingerprint:
                     unchanged += 1
                 else:
@@ -133,6 +146,7 @@ class RepositoryStore:
                         revision_rows.append(revision.to_dict())
                         revised += 1
                         revised_draw_ids.append(record.draw_id)
+                        revision_ids.append(revision.revision_id)
                     else:
                         unchanged += 1
                     current[record.draw_id] = record
@@ -154,6 +168,7 @@ class RepositoryStore:
             unchanged,
             revised,
             tuple(sorted(set(revised_draw_ids))),
+            tuple(sorted(set(revision_ids))),
         )
 
     def load_draws(
@@ -311,6 +326,23 @@ class RepositoryStore:
                     numbers_json TEXT NOT NULL,
                     method_version TEXT NOT NULL
                 );
+                CREATE TABLE draw_revisions (
+                    revision_id TEXT PRIMARY KEY,
+                    draw_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    previous_fingerprint TEXT NOT NULL,
+                    replacement_fingerprint TEXT NOT NULL
+                );
+                CREATE TABLE prediction_outcomes (
+                    outcome_id TEXT PRIMARY KEY,
+                    prediction_id TEXT NOT NULL,
+                    game_code TEXT NOT NULL,
+                    target_draw_date TEXT NOT NULL,
+                    draw_id TEXT NOT NULL,
+                    draw_fingerprint TEXT NOT NULL,
+                    matched INTEGER NOT NULL,
+                    scored_at TEXT NOT NULL
+                );
                 """
             )
             for game_code in GAMES:
@@ -338,6 +370,31 @@ class RepositoryStore:
                             prediction.target_draw_date.isoformat(),
                             json.dumps(prediction.numbers, separators=(",", ":")),
                             prediction.method_version,
+                        ),
+                    )
+                for row in _read_jsonl(self._revision_path(game_code)):
+                    connection.execute(
+                        "INSERT INTO draw_revisions VALUES (?, ?, ?, ?, ?)",
+                        (
+                            row["revision_id"],
+                            row["draw_id"],
+                            row["observed_at"],
+                            row["previous_fingerprint"],
+                            row["replacement"]["fingerprint"],
+                        ),
+                    )
+                for row in _read_jsonl(self._outcome_path(game_code)):
+                    connection.execute(
+                        "INSERT INTO prediction_outcomes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row["outcome_id"],
+                            row["prediction_id"],
+                            row["game_code"],
+                            row["target_draw_date"],
+                            row["draw_id"],
+                            row["draw_fingerprint"],
+                            int(row["matched"]),
+                            row["scored_at"],
                         ),
                     )
         temporary.replace(path)

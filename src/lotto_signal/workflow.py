@@ -13,7 +13,7 @@ from .backtest import BacktestConfig, BacktestResult, walk_forward
 from .domain import DrawRecord, MonitorEvent, Prediction
 from .features import compute_features
 from .gate import GateDecision, holm_bonferroni
-from .games import GAMES, GameSpec
+from .games import DRAW_DATE_EXCEPTIONS, GAMES, GameSpec
 from .methods import METHODS, Candidate, CandidateMethod, derive_seed
 from .pcso import PcsoSourceError
 from .store import MergeResult, RepositoryStore
@@ -30,6 +30,15 @@ class PcsoSource(Protocol):
 Analyzer = Callable[
     [GameSpec, tuple[DrawRecord, ...], Candidate], GateDecision
 ]
+
+EXPERIMENT_METHOD_VERSIONS = (
+    "balanced_v1",
+    "ensemble_v1",
+    "frequency_v1",
+    "gap_v1",
+    "pair_v1",
+)
+EXPERIMENT_FAMILY_ID = "pcso-six-number-v1-fixed100-global25"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,9 +64,7 @@ class RunContext:
     now: datetime
     runtime: RuntimeConfig | None = None
     methods: tuple[CandidateMethod, ...] = tuple(
-        method
-        for version, method in METHODS.items()
-        if version != "uniform_random_v1"
+        METHODS[version] for version in EXPERIMENT_METHOD_VERSIONS
     )
     analyze: Analyzer | None = None
 
@@ -119,6 +126,47 @@ def _draw_digest(draws: Sequence[DrawRecord]) -> str:
     )
 
 
+def _family_members() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            f"{game_code}:{method_version}"
+            for game_code in GAMES
+            for method_version in EXPERIMENT_METHOD_VERSIONS
+        )
+    )
+
+
+def _family_digest(members: Sequence[str]) -> str:
+    return _digest(list(members))
+
+
+def _draw_manifest(draws: Sequence[DrawRecord]) -> dict[str, Any]:
+    ordered = tuple(
+        sorted(draws, key=lambda item: (item.draw_date, item.draw_time, item.draw_id))
+    )
+    cutoff = ordered[-1] if ordered else None
+    return {
+        "draw_count": len(ordered),
+        "prefix_digest": _draw_digest(ordered),
+        "cutoff_draw_id": cutoff.draw_id if cutoff else None,
+        "cutoff_draw_date": cutoff.draw_date.isoformat() if cutoff else None,
+        "cutoff_draw_time": cutoff.draw_time if cutoff else None,
+    }
+
+
+def _family_is_valid(audit: dict[str, Any]) -> bool:
+    expected = _family_members()
+    members = audit.get("family_members")
+    return (
+        audit.get("family_id") == EXPERIMENT_FAMILY_ID
+        and audit.get("family_hypotheses") == len(expected)
+        and members == list(expected)
+        and audit.get("family_digest") == _family_digest(expected)
+        and set(audit.get("evidence", {})) == set(expected)
+        and set(audit.get("gate_checks", {})) == set(expected)
+    )
+
+
 def _runtime(context: RunContext) -> RuntimeConfig:
     if context.runtime is not None:
         return context.runtime
@@ -129,13 +177,19 @@ def _runtime(context: RunContext) -> RuntimeConfig:
 
 
 def _previous_status(root: Path) -> str | None:
+    previous = _previous_run(root)
+    return str(previous.get("status")) if previous else None
+
+
+def _previous_run(root: Path) -> dict[str, Any]:
     path = root / "state" / "last_run.json"
     if not path.exists():
-        return None
+        return {}
     try:
-        return str(json.loads(path.read_text()).get("status"))
+        payload = json.loads(path.read_text())
+        return payload if isinstance(payload, dict) else {}
     except (OSError, ValueError, TypeError):
-        return None
+        return {}
 
 
 def _finish(
@@ -149,6 +203,7 @@ def _finish(
     outcomes_written: int = 0,
     prediction_games: Sequence[str] = (),
     event_ids: Sequence[str] = (),
+    incident_started_at: str | None = None,
 ) -> RunReport:
     run_id = _run_id(mode, context.now)
     payload: dict[str, Any] = {
@@ -166,6 +221,8 @@ def _finish(
         "prediction_games": sorted(prediction_games),
         "event_ids": sorted(event_ids),
     }
+    if incident_started_at is not None:
+        payload["incident_started_at"] = incident_started_at
     digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
     payload["content_digest"] = digest
     _atomic_json(context.root / "state" / "last_run.json", payload)
@@ -209,15 +266,26 @@ def _incident_id(kind: str, payload: dict[str, Any]) -> str:
 def _source_error(
     context: RunContext, mode: str, error: PcsoSourceError
 ) -> RunReport:
-    was_failed = _previous_status(context.root) == "source_error"
+    previous = _previous_run(context.root)
+    previous_status = previous.get("status")
+    was_failed = previous_status in {"source_error", "pending_source"}
+    incident_started_at = str(
+        previous.get("incident_started_at")
+        or previous.get("started_at")
+        or context.now.isoformat()
+    )
     event_ids: list[str] = []
     if was_failed:
+        identity = {"incident_started_at": incident_started_at}
         event_ids.append(
             _event(
                 context,
-                "source-error-pcso-collection",
+                _incident_id("source-error", identity),
                 "action_required",
-                {"reason": "PCSO collection failed after retry", "detail": str(error)},
+                {
+                    "reason": "PCSO collection failed after retry",
+                    "incident_started_at": incident_started_at,
+                },
             )
         )
     return _finish(
@@ -226,6 +294,7 @@ def _source_error(
         "source_error",
         False,
         event_ids=event_ids,
+        incident_started_at=incident_started_at,
     )
 
 
@@ -236,6 +305,7 @@ def _correction_event(
         return ()
     payload = {
         "draw_ids": list(merge.revised_draw_ids),
+        "revision_ids": list(merge.revision_ids),
         "action": "dependent predictions and evidence must be recomputed",
     }
     event_id = _incident_id("official-correction", payload)
@@ -273,10 +343,35 @@ def _missing_games_for_day(
     )
 
 
-def _primary_method(context: RunContext) -> CandidateMethod:
-    for method in context.methods:
-        if method.method_version == "ensemble_v1":
-            return method
+def _primary_method(context: RunContext, game: GameSpec) -> CandidateMethod:
+    available = {method.method_version: method for method in context.methods}
+    audit_path = context.root / "state" / "audit.json"
+    audit: dict[str, Any] = {}
+    if audit_path.exists():
+        try:
+            audit = json.loads(audit_path.read_text())
+        except (OSError, ValueError, TypeError):
+            audit = {}
+    passing: list[tuple[float, float, str]] = []
+    if _family_is_valid(audit):
+        for version in EXPERIMENT_METHOD_VERSIONS:
+            if version not in available:
+                continue
+            hypothesis = f"{game.code}:{version}"
+            checks = audit["gate_checks"].get(hypothesis, {})
+            if checks and all(checks.values()):
+                evidence = audit["evidence"][hypothesis]
+                passing.append(
+                    (
+                        float(evidence.get("p_value", 1.0)),
+                        -float(evidence.get("effect_size", 0.0)),
+                        version,
+                    )
+                )
+    if passing:
+        return available[min(passing)[2]]
+    if "ensemble_v1" in available:
+        return available["ensemble_v1"]
     return context.methods[0]
 
 
@@ -294,6 +389,17 @@ def _validation_issues(
             issues.append(
                 f"unexpected draw weekday: {draw.draw_date.isoformat()}"
             )
+    if dates:
+        day = min(dates)
+        last = max(dates)
+        while day <= last:
+            if (
+                day.weekday() in game.draw_weekdays
+                and day not in dates
+                and day not in DRAW_DATE_EXCEPTIONS[game.code]
+            ):
+                issues.append(f"missing scheduled draw: {day.isoformat()}")
+            day += timedelta(days=1)
     return tuple(issues)
 
 
@@ -314,8 +420,13 @@ def _decision_from_audit(
     evidence = audit.get("evidence", {}).get(hypothesis)
     if not isinstance(evidence, dict):
         evidence = {}
+    family_valid = _family_is_valid(audit)
     validation = _validation_report(root, game, draws, audit)
     data_resolved = bool(validation["resolved"])
+    data_resolved = data_resolved and family_valid and all(
+        bool(report.get("resolved"))
+        for report in audit.get("validation_reports", {}).values()
+    )
     effect_size = float(evidence.get("effect_size", 0.0))
     second_half_effect = float(evidence.get("second_half_effect", 0.0))
     threshold = float(evidence.get("alert_threshold", float("inf")))
@@ -329,7 +440,7 @@ def _decision_from_audit(
             >= BacktestConfig().min_alert_predictions
         ),
         "method_frozen": bool(evidence.get("frozen_before_evaluation", False)),
-        "corrected_significance": bool(
+        "corrected_significance": family_valid and bool(
             evidence.get("corrected_significant", False)
         ),
         "positive_first_half": float(evidence.get("first_half_effect", 0.0)) > 0,
@@ -375,18 +486,39 @@ def _validation_report(
                 audit = {}
         else:
             audit = {}
-    current_digest = _draw_digest(draws)
-    expected_digest = audit.get("draw_digests", {}).get(game.code)
+    ordered = tuple(
+        sorted(draws, key=lambda item: (item.draw_date, item.draw_time, item.draw_id))
+    )
+    manifest = audit.get("draw_manifests", {}).get(game.code, {})
+    audited_count = int(manifest.get("draw_count", 0))
+    audited_prefix = ordered[:audited_count]
+    current_digest = _draw_digest(audited_prefix)
+    expected_digest = manifest.get("prefix_digest")
     issues = list(_validation_issues(game, draws))
-    if not expected_digest:
-        issues.append("no audited draw digest")
+    if not manifest or audited_count <= 0:
+        issues.append("no audited draw manifest")
+    elif len(ordered) < audited_count:
+        issues.append("audited draw prefix is missing records")
     elif expected_digest != current_digest:
-        issues.append("draw history changed since audit")
+        issues.append("audited draw prefix changed since audit")
+    elif audited_count < len(ordered):
+        cutoff_key = (
+            str(manifest.get("cutoff_draw_date")),
+            str(manifest.get("cutoff_draw_time")),
+            str(manifest.get("cutoff_draw_id")),
+        )
+        if any(
+            (draw.draw_date.isoformat(), draw.draw_time, draw.draw_id) <= cutoff_key
+            for draw in ordered[audited_count:]
+        ):
+            issues.append("backdated draw was added inside audited prefix")
     return {
         "resolved": not issues,
         "issues": issues,
         "current_draw_digest": current_digest,
         "audit_draw_digest": expected_digest,
+        "audited_draw_count": audited_count,
+        "current_draw_count": len(ordered),
     }
 
 
@@ -395,12 +527,14 @@ def _gate_transitions(
     current: dict[str, dict[str, bool]],
 ) -> tuple[tuple[str, str], ...]:
     transitions: list[tuple[str, str]] = []
-    for hypothesis in sorted(previous.keys() & current.keys()):
-        was_passing = bool(previous[hypothesis]) and all(
-            previous[hypothesis].values()
+    for hypothesis in sorted(previous.keys() | current.keys()):
+        previous_checks = previous.get(hypothesis, {})
+        current_checks = current.get(hypothesis, {})
+        was_passing = bool(previous_checks) and all(
+            previous_checks.values()
         )
-        is_passing = bool(current[hypothesis]) and all(
-            current[hypothesis].values()
+        is_passing = bool(current_checks) and all(
+            current_checks.values()
         )
         if not was_passing and is_passing:
             transitions.append((hypothesis, "newly_passing"))
@@ -460,6 +594,9 @@ def run_evening(context: RunContext) -> RunReport:
         merge,
         outcomes_written=outcomes_written,
         event_ids=correction_ids,
+        incident_started_at=(
+            context.now.isoformat() if not source_fresh else None
+        ),
     )
 
 
@@ -477,6 +614,7 @@ def run_morning(context: RunContext) -> RunReport:
         payload = {
             "reason": "required prior scheduled PCSO result is missing",
             "games": list(missing_expected),
+            "draw_date": (context.now.date() - timedelta(days=1)).isoformat(),
         }
         event_ids.append(
             _event(
@@ -497,11 +635,11 @@ def run_morning(context: RunContext) -> RunReport:
         )
 
     runtime = _runtime(context)
-    primary = _primary_method(context)
     predictions_written = 0
     prediction_games: list[str] = []
     decisions: list[dict[str, Any]] = []
     for game in _scheduled_games(context.now.date()):
+        primary = _primary_method(context, game)
         draws = store.load_draws(game.code, before=context.now)
         prediction_id = (
             f"{game.code}-{context.now.date().isoformat()}-"
@@ -593,7 +731,7 @@ def run_morning(context: RunContext) -> RunReport:
                         "random_lines_per_strategy": (
                             decision.random_lines_per_strategy
                         ),
-                        "source_cutoff": context.now.isoformat(),
+                        "source_cutoff": prediction.source_cutoff.isoformat(),
                         "disclaimer": (
                             "Experimental historical signal only; jackpot odds are "
                             "unchanged and this is not a guarantee or spending advice."
@@ -673,6 +811,8 @@ def run_audit(context: RunContext) -> RunReport:
         for method_version, summary in result.methods.items()
     }
     corrected = holm_bonferroni(p_values, BacktestConfig().family_alpha)
+    family_members = tuple(sorted(p_values))
+    trusted_family = family_members == _family_members()
     evidence: dict[str, dict[str, Any]] = {}
     gate_checks: dict[str, dict[str, bool]] = {}
     for code, result in results.items():
@@ -724,6 +864,11 @@ def run_audit(context: RunContext) -> RunReport:
                 "hypothesis": hypothesis,
                 "transition": transition,
                 "gate_digest": _digest(gate_checks),
+                "previous_checks": previous_audit.get("gate_checks", {}).get(
+                    hypothesis
+                ),
+                "current_checks": gate_checks.get(hypothesis),
+                "current_evidence": evidence.get(hypothesis),
             }
             event_ids.append(
                 _event(
@@ -744,8 +889,27 @@ def run_audit(context: RunContext) -> RunReport:
             "draw_digests": {
                 code: _draw_digest(store.load_draws(code)) for code in GAMES
             },
+            "draw_manifests": {
+                code: _draw_manifest(store.load_draws(code)) for code in GAMES
+            },
+            "validation_reports": {
+                code: {
+                    "resolved": not _validation_issues(
+                        GAMES[code], store.load_draws(code)
+                    ),
+                    "issues": list(
+                        _validation_issues(GAMES[code], store.load_draws(code))
+                    ),
+                }
+                for code in GAMES
+            },
             "revisions": merge.revised,
             "family_hypotheses": len(p_values),
+            "family_id": (
+                EXPERIMENT_FAMILY_ID if trusted_family else "custom-untrusted"
+            ),
+            "family_members": list(family_members),
+            "family_digest": _family_digest(family_members),
             "prediction_digest": _digest(prediction_rows),
             "backtest_digest": _digest(evidence),
             "gate_digest": _digest(gate_checks),

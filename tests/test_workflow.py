@@ -155,6 +155,25 @@ def test_evening_marks_delayed_results_pending_without_notifying(tmp_path: Path)
     assert report.event_ids == ()
 
 
+def test_morning_transport_failure_after_pending_evening_is_actionable(
+    tmp_path: Path,
+) -> None:
+    evening = NOW.replace(hour=22, minute=17)
+    run_evening(context(tmp_path, FakePcso(), now=evening))
+
+    morning = run_morning(
+        context(
+            tmp_path,
+            FakePcso(fail=True),
+            now=evening + timedelta(hours=9),
+        )
+    )
+
+    assert morning.status == "source_error"
+    assert len(morning.event_ids) == 1
+    assert inspect_events(tmp_path, None)[0].kind == "action_required"
+
+
 def test_first_collection_failure_is_silent_and_repeat_emits_once(
     tmp_path: Path,
 ) -> None:
@@ -277,7 +296,15 @@ def test_production_signal_emits_once_but_no_signal_emits_nothing(
         tmp_path / "signal", FakePcso(), eligible=True, production=True
     )
     signaled = run_morning(signal_context)
-    duplicate = run_morning(signal_context)
+    duplicate = run_morning(
+        context(
+            tmp_path / "signal",
+            FakePcso(),
+            eligible=True,
+            production=True,
+            now=NOW + timedelta(hours=2),
+        )
+    )
 
     assert quiet.event_ids == ()
     assert len(signaled.event_ids) == 2
@@ -285,6 +312,10 @@ def test_production_signal_emits_once_but_no_signal_emits_nothing(
     assert {event.kind for event in inspect_events(tmp_path / "signal", None)} == {
         "research_signal"
     }
+    assert {
+        event.payload["source_cutoff"]
+        for event in inspect_events(tmp_path / "signal", None)
+    } == {NOW.isoformat()}
 
 
 def test_shadow_mode_suppresses_signal_event_but_records_decision(
@@ -377,10 +408,20 @@ def test_live_gate_uses_global_audit_decision_and_current_data_integrity(
         "random_strategies": 10_000,
         "random_lines_per_strategy": 40,
     }
+    members = workflow_module._family_members()
     audit = {
-        "draw_digests": {"ML45": workflow_module._draw_digest(draws)},
-        "evidence": {"ML45:ensemble_v1": evidence},
+        "family_id": workflow_module.EXPERIMENT_FAMILY_ID,
+        "family_hypotheses": 25,
+        "family_members": list(members),
+        "family_digest": workflow_module._family_digest(members),
+        "draw_manifests": {"ML45": workflow_module._draw_manifest(draws)},
+        "validation_reports": {
+            code: {"resolved": True, "issues": []} for code in GAMES
+        },
+        "evidence": {member: dict(evidence) for member in members},
+        "gate_checks": {member: {"audited": True} for member in members},
     }
+    audit["evidence"]["ML45:ensemble_v1"] = evidence
     (tmp_path / "state").mkdir()
     (tmp_path / "state/audit.json").write_text(json.dumps(audit))
 
@@ -391,18 +432,32 @@ def test_live_gate_uses_global_audit_decision_and_current_data_integrity(
     assert locally_tempting.checks["corrected_significance"] is False
 
     evidence["corrected_significant"] = True
-    audit["draw_digests"]["ML45"] = "outdated"
+    audit["draw_manifests"]["ML45"]["prefix_digest"] = "outdated"
     (tmp_path / "state/audit.json").write_text(json.dumps(audit))
     changed_data = workflow_module._decision_from_audit(tmp_path, game, draws, current)
     assert changed_data.eligible is False
     assert changed_data.checks["data_resolved"] is False
 
-    audit["draw_digests"]["ML45"] = workflow_module._draw_digest(draws)
+    audit["draw_manifests"]["ML45"] = workflow_module._draw_manifest(draws)
     (tmp_path / "state/audit.json").write_text(json.dumps(audit))
     passing = workflow_module._decision_from_audit(tmp_path, game, draws, current)
     assert passing.eligible is True
     assert passing.total_predictions == 250
     assert passing.alert_predictions == 40
+
+    later_draws = draws + (draw("ML45", date(2026, 10, 28), suffix=2),)
+    appended = workflow_module._decision_from_audit(
+        tmp_path, game, later_draws, current
+    )
+    assert appended.checks["data_resolved"] is True
+
+    del audit["evidence"][members[0]]
+    (tmp_path / "state/audit.json").write_text(json.dumps(audit))
+    partial_family = workflow_module._decision_from_audit(
+        tmp_path, game, draws, current
+    )
+    assert partial_family.eligible is False
+    assert partial_family.checks["corrected_significance"] is False
 
 
 def test_weekly_audit_detects_newly_passing_and_lost_gate_posture() -> None:
@@ -414,3 +469,45 @@ def test_weekly_audit_detects_newly_passing_and_lost_gate_posture() -> None:
 
     assert gained == (("LOTTO42:ensemble_v1", "newly_passing"),)
     assert lost == (("LOTTO42:ensemble_v1", "lost_signal"),)
+    assert workflow_module._gate_transitions({}, passed) == (
+        ("LOTTO42:ensemble_v1", "newly_passing"),
+    )
+
+
+def test_validation_detects_missing_scheduled_draw_inside_audited_range() -> None:
+    game = GAMES["ML45"]
+    draws = (
+        draw("ML45", date(2026, 10, 26), suffix=1),
+        draw("ML45", date(2026, 10, 30), suffix=2),
+    )
+
+    assert "missing scheduled draw: 2026-10-28" in workflow_module._validation_issues(
+        game, draws
+    )
+
+
+def test_live_method_selection_can_choose_any_passing_experimental_method(
+    tmp_path: Path,
+) -> None:
+    members = workflow_module._family_members()
+    checks = {member: {"passes": False} for member in members}
+    checks["ML45:frequency_v1"] = {"passes": True}
+    evidence = {
+        member: {"p_value": 1.0, "effect_size": 0.0} for member in members
+    }
+    evidence["ML45:frequency_v1"] = {"p_value": 0.0001, "effect_size": 0.4}
+    audit = {
+        "family_id": workflow_module.EXPERIMENT_FAMILY_ID,
+        "family_hypotheses": 25,
+        "family_members": list(members),
+        "family_digest": workflow_module._family_digest(members),
+        "evidence": evidence,
+        "gate_checks": checks,
+    }
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state/audit.json").write_text(json.dumps(audit))
+    run_context = RunContext(root=tmp_path, pcso=FakePcso(), now=NOW)
+
+    selected = workflow_module._primary_method(run_context, GAMES["ML45"])
+
+    assert selected.method_version == "frequency_v1"

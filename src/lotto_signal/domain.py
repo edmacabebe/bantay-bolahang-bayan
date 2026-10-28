@@ -65,6 +65,8 @@ class DrawRecord:
             raise ValueError("draw_time must be an ISO-8601 time") from error
         if draw_at.tzinfo is None or draw_at.utcoffset() is None:
             raise ValueError("draw_time must include a timezone")
+        if self.draw_time != "21:00:00+08:00":
+            raise ValueError("draw_time must be the official 9 PM Manila time")
         game = GAMES[self.game_code]
         if (
             self.draw_date.weekday() not in game.draw_weekdays
