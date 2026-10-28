@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pcso-lotto-signal-monitor"
+version = "0.1.0"
+description = "Auditable PCSO lotto pattern research with strict random-baseline backtesting"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "httpx>=0.28,<0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "PyYAML>=6,<7",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
