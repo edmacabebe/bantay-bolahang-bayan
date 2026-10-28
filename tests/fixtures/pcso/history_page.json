@@ -1,0 +1,26 @@
+{
+  "page": 1,
+  "perPage": 2,
+  "total": 3,
+  "totalPages": 2,
+  "items": [
+    {
+      "id": "LOTTO42S0000299",
+      "lottery": "LOTTO42S0000299",
+      "drawDate": "2026-10-15",
+      "drawTime": "21:00:00+08",
+      "result": ["28", "36", "11", "17", "35", "14"],
+      "jackpot": 10000000,
+      "totalWinners": 0
+    },
+    {
+      "id": "LOTTO42S0000298",
+      "lottery": "LOTTO42S0000298",
+      "drawDate": "2026-10-13",
+      "drawTime": "21:00:00+08",
+      "result": ["42", "05", "15", "26", "19", "40"],
+      "jackpot": 94813839.57,
+      "totalWinners": 1
+    }
+  ]
+}

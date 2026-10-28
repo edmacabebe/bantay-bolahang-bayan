@@ -1,0 +1,29 @@
+[
+  {
+    "id": "LOTTO42S0000299",
+    "lottery": "LOTTO42",
+    "result": ["28", "36", "11", "17", "35", "14"],
+    "drawDate": "2026-10-15",
+    "drawTime": "21:00:00+08",
+    "jackpot": 10000000,
+    "totalWinners": 0
+  },
+  {
+    "id": "ML45S0000301",
+    "lottery": "ML45",
+    "result": ["08", "22", "19", "10", "35", "27"],
+    "drawDate": "2026-10-16",
+    "drawTime": "21:00:00+08",
+    "jackpot": 110527091.63,
+    "totalWinners": 0
+  },
+  {
+    "id": "2DLS0002103",
+    "lottery": "2DL",
+    "result": ["28", "08"],
+    "drawDate": "2026-10-16",
+    "drawTime": "21:00:00+08",
+    "jackpot": 4000,
+    "totalWinners": 16
+  }
+]
