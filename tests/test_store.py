@@ -95,6 +95,50 @@ def test_correction_appends_revision_and_projects_latest_value(tmp_path: Path) -
     assert store.load_draws("LOTTO42")[0].fingerprint == corrected.fingerprint
 
 
+def test_repeated_correction_fingerprints_preserve_every_transition(
+    tmp_path: Path,
+) -> None:
+    store = RepositoryStore(tmp_path)
+    original = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))
+    corrected = draw(
+        "LOTTO42S0001",
+        date(2026, 10, 13),
+        (1, 2, 3, 4, 5, 7),
+        retrieved_hour=2,
+    )
+    reverted = draw(
+        "LOTTO42S0001",
+        date(2026, 10, 13),
+        (1, 2, 3, 4, 5, 6),
+        retrieved_hour=1,
+    )
+    corrected_again = draw(
+        "LOTTO42S0001",
+        date(2026, 10, 13),
+        (1, 2, 3, 4, 5, 7),
+        retrieved_hour=4,
+    )
+
+    store.merge_draws([original])
+    first = store.merge_draws([corrected])
+    assert store.load_draws("LOTTO42")[0].fingerprint == corrected.fingerprint
+    second = store.merge_draws([reverted])
+    assert store.load_draws("LOTTO42")[0].fingerprint == reverted.fingerprint
+    third = store.merge_draws([corrected_again])
+    duplicate = store.merge_draws([corrected_again])
+
+    revisions = [
+        json.loads(line)
+        for line in (tmp_path / "data/revisions/LOTTO42.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert (first.revised, second.revised, third.revised) == (1, 1, 1)
+    assert duplicate.unchanged == 1
+    assert len({row["revision_id"] for row in revisions}) == 3
+    assert store.load_draws("LOTTO42")[0].fingerprint == corrected_again.fingerprint
+
+
 def test_distinct_draw_ids_for_same_game_date_are_rejected(tmp_path: Path) -> None:
     store = RepositoryStore(tmp_path)
     first = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))
@@ -127,6 +171,23 @@ def test_prediction_is_immutable_and_duplicate_is_idempotent(tmp_path: Path) -> 
     assert store.append_prediction(original) is False
     with pytest.raises(ValueError, match="immutable prediction conflict"):
         store.append_prediction(prediction(numbers=(2, 8, 17, 23, 31, 42)))
+
+
+def test_only_one_primary_prediction_is_allowed_per_game_and_draw(
+    tmp_path: Path,
+) -> None:
+    store = RepositoryStore(tmp_path)
+    original = prediction()
+    alternate_method = replace(
+        original,
+        prediction_id="LOTTO42-2026-10-22-frequency_v1",
+        method_version="frequency_v1",
+    )
+
+    store.append_prediction(original)
+
+    with pytest.raises(ValueError, match="primary prediction already exists"):
+        store.append_prediction(alternate_method)
 
 
 def test_event_id_is_written_once_and_latest_is_replaced_atomically(

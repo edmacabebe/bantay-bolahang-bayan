@@ -133,22 +133,19 @@ class RepositoryStore:
                     unchanged += 1
                 else:
                     revision = DrawRevision(
-                        revision_id=f"{record.draw_id}:{record.fingerprint}",
+                        revision_id=(
+                            f"{record.draw_id}:{len(revision_rows) + 1:06d}:"
+                            f"{record.fingerprint}"
+                        ),
                         draw_id=record.draw_id,
                         observed_at=record.retrieved_at,
                         previous_fingerprint=existing.fingerprint,
                         replacement=record,
                     )
-                    if not any(
-                        row["revision_id"] == revision.revision_id
-                        for row in revision_rows
-                    ):
-                        revision_rows.append(revision.to_dict())
-                        revised += 1
-                        revised_draw_ids.append(record.draw_id)
-                        revision_ids.append(revision.revision_id)
-                    else:
-                        unchanged += 1
+                    revision_rows.append(revision.to_dict())
+                    revised += 1
+                    revised_draw_ids.append(record.draw_id)
+                    revision_ids.append(revision.revision_id)
                     current[record.draw_id] = record
             original_values = sorted(
                 originals.values(),
@@ -157,9 +154,6 @@ class RepositoryStore:
             _write_jsonl(
                 self._draw_path(game_code),
                 (record.to_dict() for record in original_values),
-            )
-            revision_rows.sort(
-                key=lambda row: (row["observed_at"], row["revision_id"])
             )
             if revision_rows:
                 _write_jsonl(self._revision_path(game_code), revision_rows)
@@ -202,6 +196,19 @@ class RepositoryStore:
     def append_prediction(self, prediction: Prediction) -> bool:
         path = self._prediction_path(prediction.game_code)
         rows = _read_jsonl(path)
+        same_target = [
+            row
+            for row in rows
+            if row["target_draw_date"] == prediction.target_draw_date.isoformat()
+        ]
+        if any(
+            row["prediction_id"] != prediction.prediction_id
+            for row in same_target
+        ):
+            raise ValueError(
+                "primary prediction already exists for "
+                f"{prediction.game_code} {prediction.target_draw_date.isoformat()}"
+            )
         existing = {
             row["prediction_id"]: row for row in rows
         }.get(prediction.prediction_id)
@@ -232,6 +239,23 @@ class RepositoryStore:
             if row["prediction_id"] == prediction_id:
                 return _prediction_from_dict(row)
         return None
+
+    def load_prediction_for_target(
+        self, game_code: str, target_draw_date: date
+    ) -> Prediction | None:
+        if game_code not in GAMES:
+            raise ValueError(f"unknown game: {game_code}")
+        matches = [
+            _prediction_from_dict(row)
+            for row in _read_jsonl(self._prediction_path(game_code))
+            if row["target_draw_date"] == target_draw_date.isoformat()
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                "multiple primary predictions for "
+                f"{game_code} {target_draw_date.isoformat()}"
+            )
+        return matches[0] if matches else None
 
     def score_completed_predictions(self, scored_at: datetime) -> int:
         if scored_at.tzinfo is None or scored_at.utcoffset() is None:

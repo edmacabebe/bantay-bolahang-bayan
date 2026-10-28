@@ -155,6 +155,30 @@ def test_evening_marks_delayed_results_pending_without_notifying(tmp_path: Path)
     assert report.event_ids == ()
 
 
+def test_pending_source_retries_preserve_first_incident_time(tmp_path: Path) -> None:
+    evening = NOW.replace(hour=22, minute=17)
+
+    run_evening(context(tmp_path, FakePcso(), now=evening))
+    run_evening(
+        context(tmp_path, FakePcso(), now=evening + timedelta(hours=1))
+    )
+
+    state = json.loads((tmp_path / "state/last_run.json").read_text())
+    assert state["incident_started_at"] == evening.isoformat()
+
+
+def test_first_source_failure_starts_at_failure_not_previous_success(
+    tmp_path: Path,
+) -> None:
+    run_morning(context(tmp_path, FakePcso(), now=NOW))
+    failure_at = NOW.replace(hour=22, minute=17)
+
+    run_evening(context(tmp_path, FakePcso(fail=True), now=failure_at))
+
+    state = json.loads((tmp_path / "state/last_run.json").read_text())
+    assert state["incident_started_at"] == failure_at.isoformat()
+
+
 def test_morning_transport_failure_after_pending_evening_is_actionable(
     tmp_path: Path,
 ) -> None:
@@ -286,6 +310,34 @@ def test_duplicate_morning_is_idempotent_and_predictions_are_immutable(
 
     assert duplicate.predictions_written == 0
     assert (tmp_path / "data/predictions/ML45.jsonl").read_text() == first_content
+
+
+def test_same_day_retry_reuses_primary_prediction_if_selected_method_changes(
+    tmp_path: Path,
+) -> None:
+    first = run_morning(context(tmp_path, FakePcso()))
+    changed_context = RunContext(
+        root=tmp_path,
+        pcso=FakePcso(),
+        now=NOW + timedelta(hours=2),
+        runtime=RuntimeConfig(
+            production_research_signals=False,
+            shadow_started_on=date(2026, 10, 28),
+        ),
+        methods=(FixedMethod(method_version="frequency_v1"),),
+        analyze=analyzer(False),
+    )
+
+    retry = run_morning(changed_context)
+
+    assert first.predictions_written == 2
+    assert retry.predictions_written == 0
+    for game_code in ("GL55", "ML45"):
+        rows = (
+            tmp_path / f"data/predictions/{game_code}.jsonl"
+        ).read_text().splitlines()
+        assert len(rows) == 1
+        assert json.loads(rows[0])["method_version"] == "ensemble_v1"
 
 
 def test_production_signal_emits_once_but_no_signal_emits_nothing(

@@ -269,10 +269,14 @@ def _source_error(
     previous = _previous_run(context.root)
     previous_status = previous.get("status")
     was_failed = previous_status in {"source_error", "pending_source"}
-    incident_started_at = str(
-        previous.get("incident_started_at")
-        or previous.get("started_at")
-        or context.now.isoformat()
+    incident_started_at = (
+        str(
+            previous.get("incident_started_at")
+            or previous.get("started_at")
+            or context.now.isoformat()
+        )
+        if was_failed
+        else context.now.isoformat()
     )
     event_ids: list[str] = []
     if was_failed:
@@ -586,6 +590,17 @@ def run_evening(context: RunContext) -> RunReport:
     outcomes_written = store.score_completed_predictions(context.now)
     correction_ids = _correction_event(context, "evening", merge)
     source_fresh = not _missing_games_for_day(records, context.now.date())
+    previous = _previous_run(context.root)
+    incident_started_at = None
+    if not source_fresh:
+        incident_started_at = (
+            str(
+                previous.get("incident_started_at")
+                or previous.get("started_at")
+            )
+            if previous.get("status") in {"pending_source", "source_error"}
+            else context.now.isoformat()
+        )
     return _finish(
         context,
         "evening",
@@ -594,9 +609,7 @@ def run_evening(context: RunContext) -> RunReport:
         merge,
         outcomes_written=outcomes_written,
         event_ids=correction_ids,
-        incident_started_at=(
-            context.now.isoformat() if not source_fresh else None
-        ),
+        incident_started_at=incident_started_at,
     )
 
 
@@ -639,14 +652,16 @@ def run_morning(context: RunContext) -> RunReport:
     prediction_games: list[str] = []
     decisions: list[dict[str, Any]] = []
     for game in _scheduled_games(context.now.date()):
-        primary = _primary_method(context, game)
         draws = store.load_draws(game.code, before=context.now)
-        prediction_id = (
-            f"{game.code}-{context.now.date().isoformat()}-"
-            f"{primary.method_version}"
+        prediction = store.load_prediction_for_target(
+            game.code, context.now.date()
         )
-        prediction = store.load_prediction(game.code, prediction_id)
         if prediction is None:
+            primary = _primary_method(context, game)
+            prediction_id = (
+                f"{game.code}-{context.now.date().isoformat()}-"
+                f"{primary.method_version}"
+            )
             snapshot = compute_features(draws, game, context.now)
             seed = derive_seed(
                 game.code,
