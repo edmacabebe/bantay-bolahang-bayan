@@ -54,6 +54,10 @@ def small_config() -> BacktestConfig:
     )
 
 
+def test_default_backtest_config_freezes_the_full_25_hypothesis_family() -> None:
+    assert BacktestConfig().family_hypotheses == 25
+
+
 def test_walk_forward_uses_only_strictly_prior_draws_and_scores_matches() -> None:
     method = FixedMethod()
     draws = [make_draw(index) for index in range(8)]

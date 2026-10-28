@@ -26,6 +26,7 @@ class BacktestConfig:
     random_strategies: int = 10_000
     alert_percentile: float = 0.85
     family_alpha: float = 0.01
+    family_hypotheses: int = 25
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +75,15 @@ def _random_seed(game_code: str, method_version: str) -> int:
     return int(hashlib.sha256(material.encode()).hexdigest()[:16], 16)
 
 
-def _holm_flags(p_values: Mapping[str, float], alpha: float) -> dict[str, bool]:
+def _holm_flags(
+    p_values: Mapping[str, float], alpha: float, family_hypotheses: int
+) -> dict[str, bool]:
+    if family_hypotheses < len(p_values):
+        raise ValueError("family_hypotheses cannot be smaller than tested methods")
     ordered = sorted(p_values.items(), key=lambda item: (item[1], item[0]))
     flags = {name: False for name in p_values}
     for index, (name, p_value) in enumerate(ordered):
-        threshold = alpha / (len(ordered) - index)
+        threshold = alpha / (family_hypotheses - index)
         if p_value > threshold:
             break
         flags[name] = True
@@ -197,6 +202,7 @@ def walk_forward(
     flags = _holm_flags(
         {version: summary.p_value for version, summary in summaries.items()},
         config.family_alpha,
+        config.family_hypotheses,
     )
     corrected = {
         version: replace(summary, corrected_significant=flags[version])
