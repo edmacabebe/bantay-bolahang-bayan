@@ -1,0 +1,70 @@
+name: Lotto monitor
+
+on:
+  schedule:
+    - cron: "17 22 * * *"
+      timezone: "Asia/Manila"
+    - cron: "17 7 * * *"
+      timezone: "Asia/Manila"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Workflow mode
+        required: true
+        default: morning
+        type: choice
+        options:
+          - morning
+          - evening
+          - audit
+          - backfill
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lotto-monitor-main
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: python -m pip install -e '.[dev]'
+
+      - name: Run tests
+        run: python -m pytest -v
+
+      - name: Run monitor
+        env:
+          MANUAL_MODE: ${{ inputs.mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          mode="$MANUAL_MODE"
+          if [ -z "$mode" ]; then
+            if [ "$SCHEDULE" = "17 22 * * *" ]; then
+              mode="evening"
+            else
+              mode="morning"
+            fi
+          fi
+          lotto-signal "$mode"
+          if [ "$mode" = "morning" ] && [ "$(TZ=Asia/Manila date +%u)" = "1" ]; then
+            lotto-signal audit
+          fi
+
+      - name: Commit auditable state
+        run: bash scripts/commit-state.sh
