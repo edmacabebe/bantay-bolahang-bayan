@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from .backtest import BacktestConfig, walk_forward
 from .domain import DrawRecord, MonitorEvent, Prediction
 from .features import compute_features
-from .gate import GateDecision, evaluate_gate
+from .gate import GateDecision, evaluate_gate, holm_bonferroni
 from .games import GAMES, GameSpec
 from .methods import METHODS, Candidate, CandidateMethod, derive_seed
 from .pcso import PcsoSourceError
@@ -92,6 +92,10 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
 def _run_id(mode: str, now: datetime) -> str:
     material = f"{mode}|{now.isoformat()}"
     return hashlib.sha256(material.encode()).hexdigest()[:20]
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode()).hexdigest()
 
 
 def _runtime(context: RunContext) -> RuntimeConfig:
@@ -419,6 +423,68 @@ def run_audit(context: RunContext) -> RunReport:
         return _source_error(context, "audit", error)
     merge = store.merge_draws(records)
     event_ids = _correction_event(context, "audit", merge)
+    experiment_methods = tuple(
+        method
+        for method in context.methods
+        if method.method_version != "uniform_random_v1"
+    )
+    if not experiment_methods:
+        experiment_methods = context.methods
+    results = {
+        code: walk_forward(
+            game,
+            store.load_draws(code),
+            experiment_methods,
+            BacktestConfig(),
+        )
+        for code, game in GAMES.items()
+    }
+    p_values = {
+        f"{code}:{method_version}": summary.p_value
+        for code, result in results.items()
+        for method_version, summary in result.methods.items()
+    }
+    corrected = holm_bonferroni(p_values, BacktestConfig().family_alpha)
+    evidence: dict[str, dict[str, Any]] = {}
+    gate_checks: dict[str, dict[str, bool]] = {}
+    for code, result in results.items():
+        for method_version, summary in result.methods.items():
+            hypothesis = f"{code}:{method_version}"
+            evidence[hypothesis] = {
+                "total_predictions": summary.total_predictions,
+                "alert_predictions": len(summary.alert_outcomes),
+                "alert_threshold": summary.alert_threshold,
+                "p_value": summary.p_value,
+                "corrected_significant": corrected[hypothesis],
+                "effect_size": summary.effect_size,
+                "first_half_effect": summary.first_half_effect,
+                "second_half_effect": summary.second_half_effect,
+                "frozen_before_evaluation": summary.frozen_before_evaluation,
+                "random_strategies": len(summary.random_strategy_means),
+                "random_lines_per_strategy": summary.random_lines_per_strategy,
+            }
+            gate_checks[hypothesis] = {
+                "minimum_predictions": (
+                    summary.total_predictions >= result.config.min_predictions
+                ),
+                "minimum_alert_predictions": (
+                    len(summary.alert_outcomes)
+                    >= result.config.min_alert_predictions
+                ),
+                "method_frozen": summary.frozen_before_evaluation,
+                "corrected_significance": corrected[hypothesis],
+                "positive_first_half": summary.first_half_effect > 0,
+                "positive_second_half": summary.second_half_effect > 0,
+                "recent_effect_retention": (
+                    summary.effect_size > 0
+                    and summary.second_half_effect >= 0.5 * summary.effect_size
+                ),
+            }
+    prediction_rows = []
+    for path in sorted((context.root / "data" / "predictions").glob("*.jsonl")):
+        prediction_rows.extend(
+            json.loads(line) for line in path.read_text().splitlines() if line
+        )
     _atomic_json(
         context.root / "state" / "audit.json",
         {
@@ -428,6 +494,12 @@ def run_audit(context: RunContext) -> RunReport:
                 code: len(store.load_draws(code)) for code in GAMES
             },
             "revisions": merge.revised,
+            "family_hypotheses": len(p_values),
+            "prediction_digest": _digest(prediction_rows),
+            "backtest_digest": _digest(evidence),
+            "gate_digest": _digest(gate_checks),
+            "evidence": evidence,
+            "gate_checks": gate_checks,
         },
     )
     return _finish(

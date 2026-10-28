@@ -241,9 +241,15 @@ def test_monday_audit_backfills_all_games_and_event_cursor_filters(tmp_path: Pat
     pcso = FakePcso()
 
     first = run_audit(context(tmp_path, pcso, now=monday))
+    first_audit = json.loads((tmp_path / "state/audit.json").read_text())
     second = run_audit(context(tmp_path, pcso, now=monday))
+    second_audit = json.loads((tmp_path / "state/audit.json").read_text())
 
     assert first.status == second.status == "ok"
     assert pcso.history_calls == list(GAMES) * 2
     assert second.inserted == 0
     assert inspect_events(tmp_path, "does-not-exist") == ()
+    assert first_audit["family_hypotheses"] == 5
+    assert first_audit["prediction_digest"] == second_audit["prediction_digest"]
+    assert first_audit["backtest_digest"] == second_audit["backtest_digest"]
+    assert first_audit["gate_digest"] == second_audit["gate_digest"]
