@@ -15,6 +15,9 @@ def prompt_text() -> str:
 def test_prompt_names_public_state_paths_timezone_and_low_cost_model() -> None:
     text = prompt_text()
 
+    assert text.count(
+        "raw.githubusercontent.com/edmacabebe/bantay-bolahang-bayan/main/"
+    ) == 3
     assert "alerts/latest.json" in text
     assert "alerts/events.jsonl" in text
     assert "state/last_run.json" in text

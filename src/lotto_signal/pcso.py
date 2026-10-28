@@ -14,7 +14,7 @@ from .games import GAMES
 
 
 DEFAULT_BASE_URL = "https://lottomatik.pcso.gov.ph/api/backend"
-USER_AGENT = "pcso-lotto-signal-monitor/0.1 (+https://github.com/edmacabebe/pcso-lotto-signal-monitor)"
+USER_AGENT = "bantay-bolahang-bayan/0.1 (+https://github.com/edmacabebe/bantay-bolahang-bayan)"
 
 
 class PcsoSourceError(RuntimeError):

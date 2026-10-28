@@ -4,9 +4,9 @@ Use GPT-6 Luna with low reasoning when that model is available. Run this task in
 
 Read these three public state files only:
 
-- `https://raw.githubusercontent.com/edmacabebe/pcso-lotto-signal-monitor/main/alerts/latest.json`
-- `https://raw.githubusercontent.com/edmacabebe/pcso-lotto-signal-monitor/main/alerts/events.jsonl`
-- `https://raw.githubusercontent.com/edmacabebe/pcso-lotto-signal-monitor/main/state/last_run.json`
+- `https://raw.githubusercontent.com/edmacabebe/bantay-bolahang-bayan/main/alerts/latest.json`
+- `https://raw.githubusercontent.com/edmacabebe/bantay-bolahang-bayan/main/alerts/events.jsonl`
+- `https://raw.githubusercontent.com/edmacabebe/bantay-bolahang-bayan/main/state/last_run.json`
 
 Keep the last delivered event ID in this existing scheduled chat's context. Apply this procedure on every run:
 

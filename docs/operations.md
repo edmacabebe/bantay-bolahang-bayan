@@ -10,7 +10,7 @@ If this Codex session cannot create a schedule directly, open the Scheduled tab 
 
 ## Manual run
 
-From GitHub, open Actions, choose **Lotto monitor**, choose **Run workflow**, and select `morning`, `evening`, `audit`, or `backfill`. Locally, install with `python -m pip install -e '.[dev]'` and run `lotto-signal morning` or another mode from the repository root.
+From GitHub, open Actions, choose **Bantay Bolahang Bayan monitor**, choose **Run workflow**, and select `morning`, `evening`, `audit`, or `backfill`. Locally, install with `python -m pip install -e '.[dev]'` and run `lotto-signal morning` or another mode from the repository root.
 
 Always inspect the tests and the generated diff before accepting a manual state commit. Only `data/`, `state/`, and `alerts/` belong in an automated data commit.
 

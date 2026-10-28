@@ -29,7 +29,7 @@ def client_for(handler: httpx.MockTransport) -> PcsoClient:
 def test_fetch_latest_normalizes_only_supported_six_number_games() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/backend/get-results"
-        assert request.headers["User-Agent"].startswith("pcso-lotto-signal-monitor/")
+        assert request.headers["User-Agent"].startswith("bantay-bolahang-bayan/")
         return httpx.Response(200, json=fixture("latest.json"))
 
     draws = client_for(httpx.MockTransport(handler)).fetch_latest(RETRIEVED_AT)

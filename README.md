@@ -1,6 +1,6 @@
-# PCSO Lotto Signal Monitor
+# Bantay Bolahang Bayan
 
-An open-source research project for collecting official Philippine Charity Sweepstakes Office six-number lotto results and evaluating frozen combination-selection methods against equal-budget random baselines.
+An open-source statistical research project for monitoring official Philippine Charity Sweepstakes Office six-number lotto results and evaluating frozen combination-selection methods against equal-budget random baselines.
 
 ## Important disclaimer
 

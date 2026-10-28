@@ -1,4 +1,4 @@
-# PCSO Lotto Signal Monitor — Design
+# Bantay Bolahang Bayan — Design
 
 Date: 2026-10-28  
 Status: Draft for approval
@@ -63,7 +63,7 @@ The project is considered unsuccessful if it:
 - Notifications appear in Codex only.
 - The local folder is currently empty and is not a Git repository.
 - Execution location: GitHub Actions in a public open-source repository, so the user's Mac may remain off.
-- Repository name: `pcso-lotto-signal-monitor`; license: MIT.
+- Repository name: `bantay-bolahang-bayan`; license: MIT.
 - The official site may publish late, correct results, change markup, or temporarily block automated access; the collector must fail safely and preserve evidence.
 - Minimum before signal activation: 200 walk-forward evaluated draws for the specific game. Historical collection targets all reliably available official results, with three years preferred and one year as an initial backfill milestone.
 

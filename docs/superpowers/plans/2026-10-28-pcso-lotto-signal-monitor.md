@@ -1,4 +1,4 @@
-# PCSO Lotto Signal Monitor Implementation Plan
+# Bantay Bolahang Bayan Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -23,7 +23,7 @@
 - Use no model calls in GitHub Actions; never auto-upgrade to GPT-6 Astra.
 - Keep OpenAI metered usage below USD 5 per calendar month.
 - Commit no credentials, private identifiers, or private notification content.
-- Publish as `pcso-lotto-signal-monitor` under the MIT License.
+- Publish as `bantay-bolahang-bayan` under the MIT License.
 
 ## Review Focus
 
@@ -412,7 +412,7 @@ git commit -m "docs: define silent Codex notifications"
 
 **Interfaces:**
 - Consumes: all prior commands and tests.
-- Produces: public repository `edmacabebe/pcso-lotto-signal-monitor` unless the authenticated GitHub owner differs and the user selects another owner.
+- Produces: public repository `edmacabebe/bantay-bolahang-bayan` unless the authenticated GitHub owner differs and the user selects another owner.
 
 - [ ] **Step 1: Authenticate GitHub without exposing credentials**
 
@@ -443,7 +443,7 @@ git commit -m "data: seed official PCSO history"
 
 - [ ] **Step 6: Create and push the public repository**
 
-Run: `gh repo create pcso-lotto-signal-monitor --public --source . --remote origin --push --description "Auditable PCSO lotto pattern research with strict random-baseline backtesting"`  
+Run: `gh repo create bantay-bolahang-bayan --public --source . --remote origin --push --description "Auditable PCSO results research with strict random-baseline backtesting"`
 Expected: the repository is public, defaults to `main`, displays the MIT license and disclaimer, and contains no secrets.
 
 - [ ] **Step 7: Trigger and verify one manual cloud run**
