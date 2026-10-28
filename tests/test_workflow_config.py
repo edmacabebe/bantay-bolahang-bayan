@@ -44,6 +44,9 @@ def test_tests_run_before_monitor_with_python_312_and_state_commit_last() -> Non
     names = [step["name"] for step in steps]
 
     setup = next(step for step in steps if step["name"] == "Set up Python")
+    checkout = next(step for step in steps if step["name"] == "Check out repository")
+    assert checkout["uses"] == "actions/checkout@v7"
+    assert setup["uses"] == "actions/setup-python@v7"
     assert setup["with"]["python-version"] == "3.12"
     assert names.index("Run tests") < names.index("Run monitor")
     assert names[-1] == "Commit auditable state"
