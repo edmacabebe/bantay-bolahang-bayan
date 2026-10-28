@@ -197,7 +197,13 @@ class RepositoryStore:
         rendered = event.to_dict()
         existing = {row["event_id"]: row for row in rows}.get(event.event_id)
         if existing is not None:
-            if _canonical(existing) != _canonical(rendered):
+            existing_meaning = {
+                key: value for key, value in existing.items() if key != "created_at"
+            }
+            rendered_meaning = {
+                key: value for key, value in rendered.items() if key != "created_at"
+            }
+            if _canonical(existing_meaning) != _canonical(rendered_meaning):
                 raise ValueError(f"event ID conflict: {event.event_id}")
             return False
         rows.append(rendered)

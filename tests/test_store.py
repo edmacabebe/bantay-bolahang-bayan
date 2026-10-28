@@ -135,6 +135,36 @@ def test_event_id_is_written_once_and_latest_is_replaced_atomically(
     assert not list(tmp_path.rglob("*.tmp"))
 
 
+def test_event_retry_ignores_timestamp_but_rejects_changed_meaning(
+    tmp_path: Path,
+) -> None:
+    store = RepositoryStore(tmp_path)
+    original = MonitorEvent(
+        event_id="stale-source-2026-10-28",
+        kind="action_required",
+        created_at=datetime(2026, 10, 28, 1, tzinfo=timezone.utc),
+        payload={"reason": "source stale"},
+    )
+    retry = MonitorEvent(
+        event_id=original.event_id,
+        kind=original.kind,
+        created_at=datetime(2026, 10, 28, 2, tzinfo=timezone.utc),
+        payload=original.payload,
+    )
+
+    assert store.write_event(original) is True
+    assert store.write_event(retry) is False
+    with pytest.raises(ValueError, match="event ID conflict"):
+        store.write_event(
+            MonitorEvent(
+                event_id=original.event_id,
+                kind=original.kind,
+                created_at=retry.created_at,
+                payload={"reason": "different incident"},
+            )
+        )
+
+
 def test_sqlite_cache_matches_corrected_projection(tmp_path: Path) -> None:
     store = RepositoryStore(tmp_path)
     original = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))
