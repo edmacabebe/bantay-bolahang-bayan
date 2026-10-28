@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from .backtest import BacktestConfig, walk_forward
+from .backtest import BacktestConfig, BacktestResult, walk_forward
 from .domain import DrawRecord, MonitorEvent, Prediction
 from .features import compute_features
 from .gate import GateDecision, evaluate_gate, holm_bonferroni
@@ -253,6 +254,19 @@ def _default_analysis(
     return evaluate_gate(result, current, unresolved_data=False)
 
 
+def _audit_game(
+    item: tuple[str, tuple[DrawRecord, ...], tuple[str, ...]],
+) -> tuple[str, BacktestResult]:
+    code, draws, method_versions = item
+    methods = tuple(METHODS[version] for version in method_versions)
+    result = walk_forward(GAMES[code], draws, methods, BacktestConfig())
+    return code, BacktestResult(
+        game_code=result.game_code,
+        config=result.config,
+        methods=dict(result.methods),
+    )
+
+
 def run_backfill(context: RunContext) -> RunReport:
     store = RepositoryStore(context.root)
     records: list[DrawRecord] = []
@@ -430,15 +444,23 @@ def run_audit(context: RunContext) -> RunReport:
     )
     if not experiment_methods:
         experiment_methods = context.methods
-    results = {
-        code: walk_forward(
-            game,
-            store.load_draws(code),
-            experiment_methods,
-            BacktestConfig(),
+    method_versions = tuple(method.method_version for method in experiment_methods)
+    if all(version in METHODS for version in method_versions):
+        audit_items = tuple(
+            (code, store.load_draws(code), method_versions) for code in GAMES
         )
-        for code, game in GAMES.items()
-    }
+        with ProcessPoolExecutor(max_workers=len(audit_items)) as executor:
+            results = dict(executor.map(_audit_game, audit_items))
+    else:
+        results = {
+            code: walk_forward(
+                game,
+                store.load_draws(code),
+                experiment_methods,
+                BacktestConfig(),
+            )
+            for code, game in GAMES.items()
+        }
     p_values = {
         f"{code}:{method_version}": summary.p_value
         for code, result in results.items()

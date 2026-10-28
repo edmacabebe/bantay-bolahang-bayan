@@ -4,8 +4,11 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
+import lotto_signal.workflow as workflow_module
+from lotto_signal.backtest import BacktestConfig, BacktestResult
 from lotto_signal.domain import DrawRecord
 from lotto_signal.features import FeatureSnapshot
 from lotto_signal.gate import GateDecision
@@ -253,3 +256,36 @@ def test_monday_audit_backfills_all_games_and_event_cursor_filters(tmp_path: Pat
     assert first_audit["prediction_digest"] == second_audit["prediction_digest"]
     assert first_audit["backtest_digest"] == second_audit["backtest_digest"]
     assert first_audit["gate_digest"] == second_audit["gate_digest"]
+
+
+def test_default_audit_parallelizes_the_five_independent_games(
+    tmp_path: Path, monkeypatch
+) -> None:
+    executor_sizes: list[int] = []
+
+    class InlineExecutor:
+        def __init__(self, max_workers: int) -> None:
+            executor_sizes.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def map(self, function, items):
+            return [function(item) for item in items]
+
+    def empty_backtest(game, draws, methods, config):
+        return BacktestResult(
+            game_code=game.code,
+            config=BacktestConfig(),
+            methods=MappingProxyType({}),
+        )
+
+    monkeypatch.setattr(workflow_module, "ProcessPoolExecutor", InlineExecutor)
+    monkeypatch.setattr(workflow_module, "walk_forward", empty_backtest)
+
+    run_audit(RunContext(root=tmp_path, pcso=FakePcso(), now=NOW))
+
+    assert executor_sizes == [5]
