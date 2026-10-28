@@ -54,6 +54,29 @@ def test_history_uses_requested_game_when_payload_lottery_contains_draw_id() -> 
     assert page.items[0].draw_id == "LOTTO42S0000299"
 
 
+def test_history_accepts_official_legacy_ids_but_rejects_cross_game_ids() -> None:
+    payload = fixture("history_page.json")
+    assert isinstance(payload, dict)
+    payload["items"][0]["id"] = "LOTTO42LOTTO42S0000001"
+    payload["items"][1]["id"] = "LOTTO429550700"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+
+    page = client_for(transport).fetch_history_page(
+        "LOTTO42", page=1, per_page=2, retrieved_at=RETRIEVED_AT
+    )
+
+    assert [draw.draw_id for draw in page.items] == [
+        "LOTTO42LOTTO42S0000001",
+        "LOTTO429550700",
+    ]
+
+    payload["items"][0]["id"] = "ML45S0000001"
+    with pytest.raises(PcsoSourceError, match="does not match requested game"):
+        client_for(transport).fetch_history_page(
+            "LOTTO42", page=1, per_page=2, retrieved_at=RETRIEVED_AT
+        )
+
+
 def test_iter_history_stops_at_reported_total_pages() -> None:
     requested_pages: list[int] = []
 

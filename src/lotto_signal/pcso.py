@@ -153,7 +153,7 @@ class PcsoClient:
     ) -> DrawRecord:
         try:
             draw_id = str(payload["id"])
-            if not draw_id.startswith(f"{game_code}S"):
+            if not draw_id.startswith(game_code):
                 raise ValueError(
                     f"draw ID {draw_id!r} does not match requested game {game_code}"
                 )
