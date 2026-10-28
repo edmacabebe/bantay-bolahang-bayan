@@ -21,6 +21,11 @@ from .workflow import (
 
 
 MANILA = ZoneInfo("Asia/Manila")
+HANDLED_STATUSES = frozenset({"ok", "stale_source", "source_error"})
+
+
+def report_exit_code(status: str) -> int:
+    return 0 if status in HANDLED_STATUSES else 1
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -59,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         report = runners[args.command](context)
     print(json.dumps(asdict(report), sort_keys=True))
-    return 0 if report.status == "ok" else 1
+    return report_exit_code(report.status)
 
 
 if __name__ == "__main__":
