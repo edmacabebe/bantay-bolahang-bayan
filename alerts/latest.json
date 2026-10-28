@@ -1,1 +1,1 @@
-{"created_at":"2026-10-28T12:13:44.275588+08:00","event_id":"stale-source-2026-10-28","kind":"action_required","payload":{"reason":"required prior scheduled PCSO result is missing"}}
+{"created_at":"2026-10-28T21:12:31.521933+08:00","event_id":"stale-source-065dbe8da8cf149c","kind":"action_required","payload":{"draw_date":"2026-10-27","games":["LOTTO42","SL49","UL58"],"reason":"required prior scheduled PCSO result is missing"}}
