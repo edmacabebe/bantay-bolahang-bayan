@@ -18,6 +18,6 @@ See `docs/operations.md` for manual runs, incident handling, rollout gates, and 
 
 ## Initial official-history result
 
-The initial backfill contains 2,141 official draws across all five games (427–429 per game). Two clean full-family replays produced identical prediction, backtest, and gate digests. None of the 25 predeclared game-method hypotheses passed the Holm-corrected evidence gate, so the current correct output is **no research signal**.
+The initial backfill contains 2,141 official draws across all five games (427–429 per game). Each method uses its first 100 chronological predictions as a fixed training period; appending future draws cannot move that training cutoff or its 85th-percentile threshold. Two clean full-family replays produced identical prediction, backtest, and gate digests. None of the 25 predeclared game-method hypotheses passed the Holm-corrected evidence gate, so the current correct output is **no research signal**.
 
 For scale, a single line has jackpot odds of 1 in 5,245,786 for 6/42; 1 in 8,145,060 for 6/45; 1 in 13,983,816 for 6/49; 1 in 28,989,675 for 6/55; and 1 in 40,475,358 for 6/58. Playing one line in every draw of all five games is approximately a 1 in 750,556 chance of at least one jackpot over one week, or 1 in 187,639 over four weeks. Selection patterns do not improve those mathematical odds.
