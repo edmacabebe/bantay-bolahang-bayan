@@ -145,6 +145,73 @@ def test_ordinary_morning_selects_only_scheduled_games_and_stays_silent(
     assert state["content_digest"]
 
 
+def test_monitor_attempts_record_and_preserve_mode_heartbeats(
+    tmp_path: Path,
+) -> None:
+    morning = NOW
+    evening = NOW.replace(hour=22, minute=17)
+    current_results = tuple(
+        draw(code, evening.date())
+        for code, game in GAMES.items()
+        if evening.date().weekday() in game.draw_weekdays
+    )
+
+    run_morning(context(tmp_path, FakePcso(), now=morning))
+    run_evening(
+        context(tmp_path, FakePcso(latest=current_results), now=evening)
+    )
+
+    heartbeats = json.loads((tmp_path / "state/heartbeats.json").read_text())
+    assert heartbeats["morning"] == {
+        "operational_date": "2026-10-28",
+        "finished_at": morning.isoformat(),
+        "status": "ok",
+    }
+    assert heartbeats["evening"] == {
+        "operational_date": "2026-10-28",
+        "finished_at": evening.isoformat(),
+        "status": "ok",
+    }
+
+
+def test_pending_and_source_error_attempts_record_heartbeats(
+    tmp_path: Path,
+) -> None:
+    evening = NOW.replace(hour=22, minute=17)
+
+    pending = run_evening(context(tmp_path / "pending", FakePcso(), now=evening))
+    run_morning(context(tmp_path / "errors", FakePcso(fail=True), now=NOW))
+    run_evening(
+        context(tmp_path / "errors", FakePcso(fail=True), now=evening)
+    )
+
+    pending_heartbeats = json.loads(
+        (tmp_path / "pending/state/heartbeats.json").read_text()
+    )
+    error_heartbeats = json.loads(
+        (tmp_path / "errors/state/heartbeats.json").read_text()
+    )
+    assert pending.status == "pending_source"
+    assert pending_heartbeats["evening"]["status"] == "pending_source"
+    assert error_heartbeats["morning"]["status"] == "source_error"
+    assert error_heartbeats["evening"]["status"] == "source_error"
+
+
+def test_evening_operational_date_uses_noon_boundary() -> None:
+    try:
+        from lotto_signal.heartbeat import operational_date
+    except ImportError:
+        import pytest
+
+        pytest.fail("operational_date is not implemented")
+
+    at_0300 = NOW.replace(day=29, hour=3, minute=0)
+    at_noon = at_0300.replace(hour=12)
+
+    assert operational_date("evening", at_0300) == date(2026, 10, 28)
+    assert operational_date("evening", at_noon) == date(2026, 10, 29)
+
+
 def test_evening_marks_delayed_results_pending_without_notifying(tmp_path: Path) -> None:
     evening = NOW.replace(hour=22, minute=17)
 

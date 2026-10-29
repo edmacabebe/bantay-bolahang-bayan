@@ -14,6 +14,7 @@ from .domain import DrawRecord, MonitorEvent, Prediction
 from .features import compute_features
 from .gate import GateDecision, holm_bonferroni
 from .games import DRAW_DATE_EXCEPTIONS, GAMES, GameSpec
+from .heartbeat import record_heartbeat
 from .methods import METHODS, Candidate, CandidateMethod, derive_seed
 from .pcso import PcsoSourceError
 from .store import MergeResult, RepositoryStore
@@ -226,6 +227,8 @@ def _finish(
     digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
     payload["content_digest"] = digest
     _atomic_json(context.root / "state" / "last_run.json", payload)
+    if mode in {"morning", "evening"}:
+        record_heartbeat(context.root, mode, context.now, status)
     return RunReport(
         run_id=run_id,
         mode=mode,
