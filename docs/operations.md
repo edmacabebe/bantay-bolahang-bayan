@@ -18,6 +18,12 @@ Always inspect the tests and the generated diff before accepting a manual state 
 
 GitHub schedules are best-effort and may have a schedule delay. The Codex monitor treats `state/last_run.json` as stale after 30 hours and reports that condition once. Public-repository schedules may be disabled after 60 days without repository activity; re-enable the workflow in Actions and run `morning` manually.
 
+Every completed morning or evening attempt also updates `state/heartbeats.json` with its operational date, completion time, and handled status. A morning attempt belongs to the current Manila calendar date. An evening attempt before noon belongs to the prior Manila calendar date; an evening attempt at noon or later belongs to the current date. This keeps a heavily delayed overnight job attached to the night it was intended to collect.
+
+The **Bantay Bolahang Bayan watchdog** checks the morning heartbeat at 8:07 AM and 9:07 AM and the evening heartbeat at 11:07 PM and 12:07 AM, all in `Asia/Manila`. The midnight check looks for the prior evening's operational date. It dispatches the ordinary monitor workflow only when that heartbeat is absent; it never calculates combinations or writes state itself. A handled pending, fallback, or source-error heartbeat prevents an unlimited retry loop.
+
+For manual recovery, inspect `state/heartbeats.json` and `state/last_run.json` first. If the expected operational date is absent, run the corresponding mode from GitHub Actions. If the heartbeat is present, do not start a blind duplicate; investigate the recorded status and its event instead.
+
 ## Source and schema incidents
 
 The first official-source failure stays silent. A repeated failure creates an `action_required` event. If the PCSO JSON schema changes, do not overwrite history or loosen validation to force the run through. Preserve the response safely outside committed state, update a sanitized fixture and parser test, then release the parser fix.
@@ -27,6 +33,8 @@ An official correction is appended under `data/revisions/`; originals are never 
 ## Shadow and production lifecycle
 
 `config/runtime.json` starts with production research signals disabled. Keep seven days of live collection and at least two additional weeks of shadow evaluation. Review missing results, official corrections, deterministic replay, false alarms, and actual recurring usage before changing `production_research_signals` to `true`.
+
+When prior scheduled results are missing, the morning run uses `historical_fallback`: it still persists the day's scheduled-game combinations from the latest verified history, records the missing games, and suppresses every production research alert. Present such a combination only as a **historical-data guess**, never as high probability. Jackpot odds remain unchanged.
 
 To pause collection, disable the GitHub workflow. To resume, enable it and run `morning`, then `audit`, manually. To pause the Codex monitor, use its control in the Scheduled tab; resume it only after the repository heartbeat is current.
 

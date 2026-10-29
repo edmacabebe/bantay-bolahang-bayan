@@ -56,6 +56,15 @@ def test_prompt_handles_stale_runs_and_evidence_fields() -> None:
     assert "not a guarantee" in text
 
 
+def test_prompt_labels_historical_fallback_without_probability_claims() -> None:
+    text = prompt_text().lower()
+
+    assert "historical_fallback" in text
+    assert "historical-data guess" in text
+    assert "never call" in text and "high probability" in text
+    assert "production alerts were suppressed" in text
+
+
 def test_prompt_forbids_external_notification_channels() -> None:
     text = prompt_text().lower()
 
@@ -79,5 +88,12 @@ def test_operations_guide_covers_lifecycle_incidents_and_cost_ceiling() -> None:
         "resume",
         "scheduled tab",
         "paste",
+        "state/heartbeats.json",
+        "before noon",
+        "prior manila calendar date",
+        "8:07 am",
+        "9:07 am",
+        "11:07 pm",
+        "12:07 am",
     ):
         assert phrase in text
