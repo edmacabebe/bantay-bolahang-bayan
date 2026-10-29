@@ -1,1 +1,1 @@
-{"created_at":"2026-10-29T06:22:59.629654+08:00","event_id":"stale-source-2986f97cb204724e","kind":"action_required","payload":{"draw_date":"2026-10-28","games":["ML45","GL55"],"reason":"required prior scheduled PCSO result is missing"}}
+{"created_at":"2026-10-29T16:12:08.490186+08:00","event_id":"stale-source-90984df133222296","kind":"action_required","payload":{"draw_date":"2026-10-28","games":["ML45","GL55"],"historical_combinations_generated":true,"production_alerts_suppressed":true,"reason":"required prior scheduled PCSO result is missing"}}
