@@ -1,0 +1,50 @@
+name: Bantay Bolahang Bayan watchdog
+
+on:
+  schedule:
+    - cron: "7 8 * * *"
+      timezone: "Asia/Manila"
+    - cron: "7 9 * * *"
+      timezone: "Asia/Manila"
+    - cron: "7 23 * * *"
+      timezone: "Asia/Manila"
+    - cron: "7 0 * * *"
+      timezone: "Asia/Manila"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: lotto-watchdog-main
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check expected heartbeat
+        id: watchdog
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: >-
+          PYTHONPATH=src python -m lotto_signal.watchdog
+          --root .
+          --schedule "$SCHEDULE"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Dispatch missed monitor run
+        if: steps.watchdog.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.watchdog.outputs.mode }}
+        run: gh workflow run lotto-monitor.yml --ref "$GITHUB_REF_NAME" -f mode="$MODE"
