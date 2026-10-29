@@ -12,10 +12,10 @@ from .heartbeat import heartbeat_matches
 
 MANILA = ZoneInfo("Asia/Manila")
 SCHEDULE_TARGETS = {
-    "7 8 * * *": ("morning", 0),
-    "7 9 * * *": ("morning", 0),
-    "7 23 * * *": ("evening", 0),
-    "7 0 * * *": ("evening", -1),
+    "7 8 * * *": ("morning", 8, 7, 0),
+    "7 9 * * *": ("morning", 9, 7, 0),
+    "7 23 * * *": ("evening", 23, 7, 0),
+    "7 0 * * *": ("evening", 0, 7, -1),
 }
 
 
@@ -36,9 +36,12 @@ def watchdog_decision(
         raise ValueError("watchdog time must be timezone-aware")
     if schedule not in SCHEDULE_TARGETS:
         raise ValueError(f"unsupported watchdog schedule: {schedule}")
-    mode, offset = SCHEDULE_TARGETS[schedule]
-    local_day = now.astimezone(MANILA).date()
-    expected_date = local_day + timedelta(days=offset)
+    mode, scheduled_hour, scheduled_minute, offset = SCHEDULE_TARGETS[schedule]
+    local_now = now.astimezone(MANILA)
+    scheduled_day = local_now.date()
+    if (local_now.hour, local_now.minute) < (scheduled_hour, scheduled_minute):
+        scheduled_day -= timedelta(days=1)
+    expected_date = scheduled_day + timedelta(days=offset)
     matched = heartbeat_matches(root, mode, expected_date)
     return WatchdogDecision(
         mode=mode,

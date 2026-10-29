@@ -230,6 +230,29 @@ def test_evening_marks_delayed_results_pending_without_notifying(tmp_path: Path)
     assert report.event_ids == ()
 
 
+def test_midnight_evening_recovery_checks_prior_operational_date(
+    tmp_path: Path,
+) -> None:
+    recovered_at = NOW.replace(day=29, hour=0, minute=7)
+    prior_day = date(2026, 10, 28)
+    prior_results = tuple(
+        draw(code, prior_day)
+        for code, game in GAMES.items()
+        if prior_day.weekday() in game.draw_weekdays
+    )
+
+    report = run_evening(
+        context(tmp_path, FakePcso(latest=prior_results), now=recovered_at)
+    )
+
+    heartbeat = json.loads(
+        (tmp_path / "state/heartbeats.json").read_text()
+    )["evening"]
+    assert report.status == "ok"
+    assert report.source_fresh is True
+    assert heartbeat["operational_date"] == "2026-10-28"
+
+
 def test_pending_source_retries_preserve_first_incident_time(tmp_path: Path) -> None:
     evening = NOW.replace(hour=22, minute=17)
 

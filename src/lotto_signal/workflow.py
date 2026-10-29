@@ -14,7 +14,7 @@ from .domain import DrawRecord, MonitorEvent, Prediction
 from .features import compute_features
 from .gate import GateDecision, holm_bonferroni
 from .games import DRAW_DATE_EXCEPTIONS, GAMES, GameSpec
-from .heartbeat import record_heartbeat
+from .heartbeat import operational_date, record_heartbeat
 from .methods import METHODS, Candidate, CandidateMethod, derive_seed
 from .pcso import PcsoSourceError
 from .store import MergeResult, RepositoryStore
@@ -592,7 +592,8 @@ def run_evening(context: RunContext) -> RunReport:
     merge = store.merge_draws(records)
     outcomes_written = store.score_completed_predictions(context.now)
     correction_ids = _correction_event(context, "evening", merge)
-    source_fresh = not _missing_games_for_day(records, context.now.date())
+    evening_date = operational_date("evening", context.now)
+    source_fresh = not _missing_games_for_day(records, evening_date)
     previous = _previous_run(context.root)
     incident_started_at = None
     if not source_fresh:

@@ -47,6 +47,7 @@ def test_tests_run_before_monitor_with_python_312_and_state_commit_last() -> Non
     setup = next(step for step in steps if step["name"] == "Set up Python")
     checkout = next(step for step in steps if step["name"] == "Check out repository")
     assert checkout["uses"] == "actions/checkout@v7"
+    assert checkout["with"]["ref"] == "main"
     assert setup["uses"] == "actions/setup-python@v7"
     assert setup["with"]["python-version"] == "3.12"
     assert names.index("Run tests") < names.index("Run monitor")
@@ -84,6 +85,12 @@ def test_watchdog_workflow_is_read_only_and_conditionally_dispatches_monitor() -
     }
     assert workflow["permissions"] == {"contents": "read", "actions": "write"}
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    checkout = next(
+        step
+        for step in workflow["jobs"]["watchdog"]["steps"]
+        if step["name"] == "Check out repository"
+    )
+    assert checkout["with"]["ref"] == "main"
     assert "PYTHONPATH=src python -m lotto_signal.watchdog" in text
     assert "gh workflow run lotto-monitor.yml" in text
     assert "steps.watchdog.outputs.dispatch == 'true'" in text

@@ -34,14 +34,15 @@ def test_watchdog_schedule_maps_to_mode_and_operational_date(
 ) -> None:
     module = watchdog_module()
 
-    expected = {
-        "7 8 * * *": ("morning", date(2026, 10, 29)),
-        "7 9 * * *": ("morning", date(2026, 10, 29)),
-        "7 23 * * *": ("evening", date(2026, 10, 29)),
-        "7 0 * * *": ("evening", date(2026, 10, 28)),
-    }
-    for schedule, target in expected.items():
-        decision = module.watchdog_decision(tmp_path, schedule, NOW)
+    expected = (
+        ("7 8 * * *", NOW, "morning", date(2026, 10, 29)),
+        ("7 9 * * *", NOW.replace(hour=9), "morning", date(2026, 10, 29)),
+        ("7 23 * * *", NOW.replace(hour=23), "evening", date(2026, 10, 29)),
+        ("7 0 * * *", NOW.replace(hour=0), "evening", date(2026, 10, 28)),
+    )
+    for schedule, run_at, mode, operational_day in expected:
+        decision = module.watchdog_decision(tmp_path, schedule, run_at)
+        target = (mode, operational_day)
         assert (decision.mode, decision.operational_date) == target
 
 
@@ -62,6 +63,28 @@ def test_matching_heartbeat_is_noop(tmp_path: Path) -> None:
 
     assert decision.dispatch is False
     assert decision.reason == "heartbeat present"
+
+
+def test_delayed_evening_watchdog_uses_scheduled_day_across_midnight(
+    tmp_path: Path,
+) -> None:
+    module = watchdog_module()
+    delayed_at = NOW.replace(hour=0)
+    write_heartbeats(
+        tmp_path,
+        {
+            "evening": {
+                "operational_date": "2026-10-28",
+                "finished_at": delayed_at.isoformat(),
+                "status": "ok",
+            }
+        },
+    )
+
+    decision = module.watchdog_decision(tmp_path, "7 23 * * *", delayed_at)
+
+    assert decision.operational_date == date(2026, 10, 28)
+    assert decision.dispatch is False
 
 
 @pytest.mark.parametrize(
