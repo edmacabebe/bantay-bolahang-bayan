@@ -57,6 +57,14 @@ def healthy_latest() -> tuple[DrawRecord, ...]:
     return tuple(records)
 
 
+def stale_latest() -> tuple[DrawRecord, ...]:
+    return tuple(
+        record
+        for record in healthy_latest()
+        if record.game_code not in {"LOTTO42", "SL49", "UL58"}
+    )
+
+
 @dataclass
 class FakePcso:
     latest: tuple[DrawRecord, ...] = field(default_factory=healthy_latest)
@@ -283,21 +291,63 @@ def test_first_collection_failure_is_silent_and_repeat_emits_once(
     assert len(inspect_events(tmp_path, None)) == 1
 
 
-def test_missing_previous_scheduled_results_withholds_predictions_and_emits_stale_event(
+def test_missing_previous_results_generate_historical_fallback(
     tmp_path: Path,
 ) -> None:
-    stale = tuple(
-        record
-        for record in healthy_latest()
-        if record.game_code not in {"LOTTO42", "SL49", "UL58"}
+    report = run_morning(context(tmp_path, FakePcso(latest=stale_latest())))
+
+    decisions = json.loads((tmp_path / "state/gate_decisions.json").read_text())
+    heartbeats = json.loads((tmp_path / "state/heartbeats.json").read_text())
+    events = inspect_events(tmp_path, None)
+    assert report.status == "historical_fallback"
+    assert report.source_fresh is False
+    assert report.prediction_games == ("GL55", "ML45")
+    assert decisions["historical_fallback"] is True
+    assert decisions["missing_expected_games"] == ["LOTTO42", "SL49", "UL58"]
+    assert decisions["production_alerts_suppressed"] is True
+    assert heartbeats["morning"]["status"] == "historical_fallback"
+    assert [event.kind for event in events] == ["action_required"]
+    assert events[0].payload["historical_combinations_generated"] is True
+    assert events[0].payload["production_alerts_suppressed"] is True
+
+
+def test_historical_fallback_retry_is_idempotent(tmp_path: Path) -> None:
+    pcso = FakePcso(latest=stale_latest())
+    first = run_morning(context(tmp_path, pcso))
+    prediction_bytes = {
+        code: (tmp_path / f"data/predictions/{code}.jsonl").read_bytes()
+        for code in ("GL55", "ML45")
+    }
+
+    retry = run_morning(context(tmp_path, pcso, now=NOW + timedelta(hours=2)))
+
+    assert first.predictions_written == 2
+    assert retry.predictions_written == 0
+    assert retry.event_ids == first.event_ids
+    assert {
+        code: (tmp_path / f"data/predictions/{code}.jsonl").read_bytes()
+        for code in ("GL55", "ML45")
+    } == prediction_bytes
+
+
+def test_historical_fallback_suppresses_eligible_production_signal(
+    tmp_path: Path,
+) -> None:
+    report = run_morning(
+        context(
+            tmp_path,
+            FakePcso(latest=stale_latest()),
+            eligible=True,
+            production=True,
+        )
     )
 
-    report = run_morning(context(tmp_path, FakePcso(latest=stale)))
-
-    assert report.status == "stale_source"
-    assert report.source_fresh is False
-    assert report.prediction_games == ()
-    assert inspect_events(tmp_path, None)[0].kind == "action_required"
+    decisions = json.loads((tmp_path / "state/gate_decisions.json").read_text())
+    assert report.status == "historical_fallback"
+    assert {event.kind for event in inspect_events(tmp_path, None)} == {
+        "action_required"
+    }
+    assert decisions["production_alerts_suppressed"] is True
 
 
 def test_official_correction_is_append_only_and_triggers_recomputation_notice(
@@ -445,6 +495,9 @@ def test_shadow_mode_suppresses_signal_event_but_records_decision(
     assert report.event_ids == ()
     decisions = json.loads((tmp_path / "state/gate_decisions.json").read_text())
     assert decisions["mode"] == "shadow"
+    assert decisions["historical_fallback"] is False
+    assert decisions["missing_expected_games"] == []
+    assert decisions["production_alerts_suppressed"] is False
     assert {item["eligible"] for item in decisions["decisions"]} == {True}
     assert all("validation" in item for item in decisions["decisions"])
 

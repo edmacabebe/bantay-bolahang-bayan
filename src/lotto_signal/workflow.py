@@ -626,11 +626,14 @@ def run_morning(context: RunContext) -> RunReport:
     outcomes_written = store.score_completed_predictions(context.now)
     event_ids = list(_correction_event(context, "morning", merge))
     missing_expected = _missing_expected_games(records, context.now)
-    if missing_expected:
+    historical_fallback = bool(missing_expected)
+    if historical_fallback:
         payload = {
             "reason": "required prior scheduled PCSO result is missing",
             "games": list(missing_expected),
             "draw_date": (context.now.date() - timedelta(days=1)).isoformat(),
+            "historical_combinations_generated": True,
+            "production_alerts_suppressed": True,
         }
         event_ids.append(
             _event(
@@ -639,15 +642,6 @@ def run_morning(context: RunContext) -> RunReport:
                 "action_required",
                 payload,
             )
-        )
-        return _finish(
-            context,
-            "morning",
-            "stale_source",
-            False,
-            merge,
-            outcomes_written=outcomes_written,
-            event_ids=event_ids,
         )
 
     runtime = _runtime(context)
@@ -723,7 +717,11 @@ def run_morning(context: RunContext) -> RunReport:
                 ),
             }
         )
-        if decision.eligible and runtime.production_research_signals:
+        if (
+            decision.eligible
+            and runtime.production_research_signals
+            and not historical_fallback
+        ):
             event_ids.append(
                 _event(
                     context,
@@ -766,14 +764,17 @@ def run_morning(context: RunContext) -> RunReport:
                 "production" if runtime.production_research_signals else "shadow"
             ),
             "shadow_started_on": runtime.shadow_started_on.isoformat(),
+            "historical_fallback": historical_fallback,
+            "missing_expected_games": list(missing_expected),
+            "production_alerts_suppressed": historical_fallback,
             "decisions": decisions,
         },
     )
     return _finish(
         context,
         "morning",
-        "ok",
-        True,
+        "historical_fallback" if historical_fallback else "ok",
+        not historical_fallback,
         merge,
         predictions_written=predictions_written,
         outcomes_written=outcomes_written,

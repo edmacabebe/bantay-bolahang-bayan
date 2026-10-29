@@ -22,7 +22,13 @@ from .workflow import (
 
 MANILA = ZoneInfo("Asia/Manila")
 HANDLED_STATUSES = frozenset(
-    {"ok", "pending_source", "stale_source", "source_error"}
+    {
+        "ok",
+        "pending_source",
+        "stale_source",
+        "source_error",
+        "historical_fallback",
+    }
 )
 
 
