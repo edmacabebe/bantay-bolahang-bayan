@@ -381,8 +381,10 @@ def _scorecard_payload(
         "status": status,
         "completed_games": completed_games,
         "pending_games": pending_games,
-        "total_matched_numbers": sum(
-            int(entry["matched_count"] or 0) for entry in entries
+        "total_matched_numbers": (
+            None
+            if pending_games
+            else sum(int(entry["matched_count"] or 0) for entry in entries)
         ),
         "entries": entries,
     }
@@ -391,9 +393,9 @@ def _scorecard_payload(
 def _scorecard_dates(
     store: RepositoryStore,
     records: Sequence[DrawRecord],
-    daily_target: date,
+    daily_target: date | None,
 ) -> tuple[date, ...]:
-    targets = {daily_target}
+    targets = {daily_target} if daily_target is not None else set()
     for record in records:
         if store.load_prediction_for_target(record.game_code, record.draw_date):
             targets.add(record.draw_date)
@@ -677,14 +679,20 @@ def run_backfill(context: RunContext) -> RunReport:
     except PcsoSourceError as error:
         return _source_error(context, "backfill", error)
     merge = store.merge_draws(records)
-    correction_ids = _correction_event(context, "backfill", merge)
+    event_ids = list(_correction_event(context, "backfill", merge))
+    event_ids.extend(
+        _scorecard_events(
+            context,
+            _scorecard_dates(store, records, None),
+        )
+    )
     return _finish(
         context,
         "backfill",
         "ok",
         True,
         merge,
-        event_ids=correction_ids,
+        event_ids=event_ids,
     )
 
 
@@ -926,6 +934,12 @@ def run_audit(context: RunContext) -> RunReport:
         return _source_error(context, "audit", error)
     merge = store.merge_draws(records)
     event_ids = list(_correction_event(context, "audit", merge))
+    event_ids.extend(
+        _scorecard_events(
+            context,
+            _scorecard_dates(store, records, None),
+        )
+    )
     experiment_methods = tuple(
         method
         for method in context.methods

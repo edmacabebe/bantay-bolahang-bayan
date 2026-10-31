@@ -21,6 +21,7 @@ from lotto_signal.workflow import (
     RuntimeConfig,
     inspect_events,
     run_audit,
+    run_backfill,
     run_evening,
     run_morning,
 )
@@ -500,7 +501,7 @@ def test_morning_emits_pending_scorecard_for_previous_day_guess(
         "pending_games": 1,
         "status": "pending",
         "target_draw_date": "2026-10-27",
-        "total_matched_numbers": 0,
+        "total_matched_numbers": None,
     }
     assert len(events) == 1
     assert events[0].payload == scorecard
@@ -559,6 +560,57 @@ def test_later_result_replaces_pending_scorecard_with_match_comparison(
     }
     assert [event.payload["status"] for event in events] == [
         "pending",
+        "complete",
+    ]
+
+
+def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    without_result = tuple(
+        record
+        for record in healthy_latest()
+        if record.game_code != "LOTTO42"
+    )
+    run_morning(context(tmp_path, FakePcso(latest=without_result)))
+    delayed = draw("LOTTO42", target, offset=3)
+
+    run_backfill(
+        context(
+            tmp_path,
+            FakePcso(latest=without_result + (delayed,)),
+            now=NOW + timedelta(hours=1),
+        )
+    )
+    completed = json.loads(
+        (tmp_path / "state/scorecards/2026-10-27.json").read_text()
+    )
+
+    corrected = draw("LOTTO42", target, offset=4)
+    audit = run_audit(
+        context(
+            tmp_path,
+            FakePcso(latest=without_result + (corrected,)),
+            now=NOW + timedelta(hours=2),
+        )
+    )
+    revised = json.loads(
+        (tmp_path / "state/scorecards/2026-10-27.json").read_text()
+    )
+    scorecard_events = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "daily_scorecard"
+    ]
+
+    assert completed["entries"][0]["winning_numbers"] == [4, 5, 6, 7, 8, 9]
+    assert audit.revised == 1
+    assert revised["entries"][0]["winning_numbers"] == [5, 6, 7, 8, 9, 10]
+    assert [event.payload["status"] for event in scorecard_events] == [
+        "pending",
+        "complete",
         "complete",
     ]
 
