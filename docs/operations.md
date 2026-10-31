@@ -36,6 +36,8 @@ An official correction is appended under `data/revisions/`; originals are never 
 
 When prior scheduled results are missing, the morning run uses `historical_fallback`: it still persists the day's scheduled-game combinations from the latest verified history, records the missing games, and suppresses every production research alert. Present such a combination only as a **historical-data guess**, never as high probability. Jackpot odds remain unchanged.
 
+Each collection run also refreshes deterministic daily scorecards under `state/scorecards/` and publishes the latest one at `state/daily_scorecard.json`. The morning scorecard covers the previous Manila calendar day. A missing official result is reported as pending instead of being treated as zero matches. When a later run receives the result, it emits a completed `daily_scorecard` with predicted numbers, winning numbers, matched numbers, and the matched-ball count out of six. Corrected official results produce a new scorecard version through their changed content.
+
 To pause collection, disable the GitHub workflow. To resume, enable it and run `morning`, then `audit`, manually. To pause the Codex monitor, use its control in the Scheduled tab; resume it only after the repository heartbeat is current.
 
 ## Cost controls

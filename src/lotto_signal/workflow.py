@@ -330,6 +330,111 @@ def _scheduled_games(day: date) -> tuple[GameSpec, ...]:
     return tuple(game for game in GAMES.values() if day.weekday() in game.draw_weekdays)
 
 
+def _scorecard_payload(
+    store: RepositoryStore,
+    target_draw_date: date,
+) -> dict[str, Any] | None:
+    entries: list[dict[str, Any]] = []
+    for game in _scheduled_games(target_draw_date):
+        prediction = store.load_prediction_for_target(game.code, target_draw_date)
+        if prediction is None:
+            continue
+        matching_draws = tuple(
+            draw
+            for draw in store.load_draws(game.code)
+            if draw.draw_date == target_draw_date
+        )
+        draw = matching_draws[0] if len(matching_draws) == 1 else None
+        matched_numbers = (
+            sorted(set(prediction.numbers) & set(draw.sorted_numbers))
+            if draw is not None
+            else []
+        )
+        entries.append(
+            {
+                "game_code": game.code,
+                "game_name": game.name,
+                "predicted_numbers": list(prediction.numbers),
+                "result_status": "complete" if draw is not None else "pending",
+                "winning_numbers": (
+                    list(draw.sorted_numbers) if draw is not None else None
+                ),
+                "matched_numbers": matched_numbers,
+                "matched_count": len(matched_numbers) if draw is not None else None,
+            }
+        )
+    if not entries:
+        return None
+    completed_games = sum(
+        entry["result_status"] == "complete" for entry in entries
+    )
+    pending_games = len(entries) - completed_games
+    status = (
+        "complete"
+        if pending_games == 0
+        else "pending"
+        if completed_games == 0
+        else "partial"
+    )
+    return {
+        "target_draw_date": target_draw_date.isoformat(),
+        "status": status,
+        "completed_games": completed_games,
+        "pending_games": pending_games,
+        "total_matched_numbers": sum(
+            int(entry["matched_count"] or 0) for entry in entries
+        ),
+        "entries": entries,
+    }
+
+
+def _scorecard_dates(
+    store: RepositoryStore,
+    records: Sequence[DrawRecord],
+    daily_target: date,
+) -> tuple[date, ...]:
+    targets = {daily_target}
+    for record in records:
+        if store.load_prediction_for_target(record.game_code, record.draw_date):
+            targets.add(record.draw_date)
+    return tuple(sorted(targets))
+
+
+def _scorecard_events(
+    context: RunContext,
+    target_dates: Sequence[date],
+) -> tuple[str, ...]:
+    store = RepositoryStore(context.root)
+    event_ids: list[str] = []
+    payloads: list[dict[str, Any]] = []
+    for target_draw_date in sorted(set(target_dates)):
+        payload = _scorecard_payload(store, target_draw_date)
+        if payload is None:
+            continue
+        payloads.append(payload)
+        _atomic_json(
+            context.root
+            / "state"
+            / "scorecards"
+            / f"{target_draw_date.isoformat()}.json",
+            payload,
+        )
+        event_ids.append(
+            _event(
+                context,
+                _incident_id("daily-scorecard", payload),
+                "daily_scorecard",
+                payload,
+            )
+        )
+    if payloads:
+        _atomic_json(
+            context.root / "state" / "daily_scorecard.json",
+            payloads[-1],
+        )
+    return tuple(event_ids)
+
+
 def _missing_expected_games(
     records: Sequence[DrawRecord], now: datetime
 ) -> tuple[str, ...]:
@@ -591,8 +696,18 @@ def run_evening(context: RunContext) -> RunReport:
         return _source_error(context, "evening", error)
     merge = store.merge_draws(records)
     outcomes_written = store.score_completed_predictions(context.now)
-    correction_ids = _correction_event(context, "evening", merge)
+    event_ids = list(_correction_event(context, "evening", merge))
     evening_date = operational_date("evening", context.now)
+    event_ids.extend(
+        _scorecard_events(
+            context,
+            _scorecard_dates(
+                store,
+                records,
+                evening_date - timedelta(days=1),
+            ),
+        )
+    )
     source_fresh = not _missing_games_for_day(records, evening_date)
     previous = _previous_run(context.root)
     incident_started_at = None
@@ -612,7 +727,7 @@ def run_evening(context: RunContext) -> RunReport:
         source_fresh,
         merge,
         outcomes_written=outcomes_written,
-        event_ids=correction_ids,
+        event_ids=event_ids,
         incident_started_at=incident_started_at,
     )
 
@@ -770,6 +885,16 @@ def run_morning(context: RunContext) -> RunReport:
             "production_alerts_suppressed": historical_fallback,
             "decisions": decisions,
         },
+    )
+    event_ids.extend(
+        _scorecard_events(
+            context,
+            _scorecard_dates(
+                store,
+                records,
+                context.now.date() - timedelta(days=1),
+            ),
+        )
     )
     return _finish(
         context,

@@ -65,6 +65,16 @@ def test_prompt_labels_historical_fallback_without_probability_claims() -> None:
     assert "production alerts were suppressed" in text
 
 
+def test_prompt_reports_daily_scorecards_including_pending_results() -> None:
+    text = prompt_text().lower()
+
+    assert "daily_scorecard" in text
+    assert "pending official result" in text
+    assert "matched_numbers" in text
+    assert "matched_count" in text
+    assert "n/6" in text
+
+
 def test_prompt_forbids_external_notification_channels() -> None:
     text = prompt_text().lower()
 

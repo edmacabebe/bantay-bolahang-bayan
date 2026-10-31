@@ -138,6 +138,31 @@ def context(
     )
 
 
+def append_prediction(
+    root: Path,
+    game_code: str,
+    target_draw_date: date,
+    numbers: tuple[int, ...] = (1, 2, 3, 4, 5, 6),
+) -> None:
+    RepositoryStore(root).append_prediction(
+        Prediction(
+            prediction_id=(
+                f"{game_code}-{target_draw_date.isoformat()}-ensemble_v1"
+            ),
+            game_code=game_code,
+            target_draw_date=target_draw_date,
+            method_version="ensemble_v1",
+            numbers=numbers,
+            raw_score=1.0,
+            signal_score=1.0,
+            seed=1,
+            created_at=NOW - timedelta(days=1),
+            source_cutoff=NOW - timedelta(days=1),
+            feature_values={},
+        )
+    )
+
+
 def test_ordinary_morning_selects_only_scheduled_games_and_stays_silent(
     tmp_path: Path,
 ) -> None:
@@ -436,6 +461,106 @@ def test_evening_scores_prediction_once_and_versions_corrected_outcome(
     assert revised.outcomes_written == 1
     assert [row["matched"] for row in rows] == [6, 5]
     assert rows[0]["draw_fingerprint"] != rows[1]["draw_fingerprint"]
+
+
+def test_morning_emits_pending_scorecard_for_previous_day_guess(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    without_result = tuple(
+        record
+        for record in healthy_latest()
+        if record.game_code != "LOTTO42"
+    )
+
+    run_morning(context(tmp_path, FakePcso(latest=without_result)))
+
+    scorecard = json.loads(
+        (tmp_path / "state/daily_scorecard.json").read_text()
+    )
+    events = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "daily_scorecard"
+    ]
+    assert scorecard == {
+        "completed_games": 0,
+        "entries": [
+            {
+                "game_code": "LOTTO42",
+                "game_name": "Lotto 6/42",
+                "matched_count": None,
+                "matched_numbers": [],
+                "predicted_numbers": [1, 2, 3, 4, 5, 6],
+                "result_status": "pending",
+                "winning_numbers": None,
+            }
+        ],
+        "pending_games": 1,
+        "status": "pending",
+        "target_draw_date": "2026-10-27",
+        "total_matched_numbers": 0,
+    }
+    assert len(events) == 1
+    assert events[0].payload == scorecard
+
+
+def test_later_result_replaces_pending_scorecard_with_match_comparison(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    without_result = tuple(
+        record
+        for record in healthy_latest()
+        if record.game_code != "LOTTO42"
+    )
+    run_morning(context(tmp_path, FakePcso(latest=without_result)))
+    winning_draw = draw("LOTTO42", target, offset=3)
+
+    completed = run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=without_result + (winning_draw,)),
+            now=NOW.replace(hour=22, minute=17),
+        )
+    )
+    duplicate = run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=without_result + (winning_draw,)),
+            now=NOW.replace(hour=23, minute=17),
+        )
+    )
+
+    scorecard = json.loads(
+        (tmp_path / "state/scorecards/2026-10-27.json").read_text()
+    )
+    events = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "daily_scorecard"
+    ]
+    assert completed.outcomes_written == 1
+    assert duplicate.outcomes_written == 0
+    assert scorecard["status"] == "complete"
+    assert scorecard["completed_games"] == 1
+    assert scorecard["pending_games"] == 0
+    assert scorecard["total_matched_numbers"] == 3
+    assert scorecard["entries"][0] == {
+        "game_code": "LOTTO42",
+        "game_name": "Lotto 6/42",
+        "matched_count": 3,
+        "matched_numbers": [4, 5, 6],
+        "predicted_numbers": [1, 2, 3, 4, 5, 6],
+        "result_status": "complete",
+        "winning_numbers": [4, 5, 6, 7, 8, 9],
+    }
+    assert [event.payload["status"] for event in events] == [
+        "pending",
+        "complete",
+    ]
 
 
 def test_duplicate_morning_is_idempotent_and_predictions_are_immutable(
