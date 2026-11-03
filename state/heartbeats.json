@@ -1,1 +1,1 @@
-{"evening":{"finished_at":"2026-11-03T06:46:17.019153+08:00","operational_date":"2026-11-02","status":"pending_source"},"morning":{"finished_at":"2026-11-03T11:55:41.437769+08:00","operational_date":"2026-11-03","status":"historical_fallback"}}
+{"evening":{"finished_at":"2026-11-04T04:30:22.882126+08:00","operational_date":"2026-11-03","status":"source_error"},"morning":{"finished_at":"2026-11-03T11:55:41.437769+08:00","operational_date":"2026-11-03","status":"historical_fallback"}}
