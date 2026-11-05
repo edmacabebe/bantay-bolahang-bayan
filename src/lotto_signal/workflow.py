@@ -17,6 +17,7 @@ from .games import DRAW_DATE_EXCEPTIONS, GAMES, GameSpec
 from .heartbeat import operational_date, record_heartbeat
 from .methods import METHODS, Candidate, CandidateMethod, derive_seed
 from .pcso import PcsoSourceError
+from .reporting import performance_summary
 from .store import MergeResult, RepositoryStore
 
 
@@ -353,22 +354,52 @@ def _scorecard_payload(
             if draw.draw_date == target_draw_date
         )
         draw = matching_draws[0] if len(matching_draws) == 1 else None
+        random_expected_matches = round(36 / game.max_number, 6)
         matched_numbers = (
             sorted(set(prediction.numbers) & set(draw.sorted_numbers))
             if draw is not None
             else []
         )
+        matched_count = len(matched_numbers) if draw is not None else None
         entries.append(
             {
                 "game_code": game.code,
                 "game_name": game.name,
                 "predicted_numbers": list(prediction.numbers),
+                "prediction_created_at": prediction.created_at.isoformat(),
+                "method_version": prediction.method_version,
+                "signal_score": prediction.signal_score,
+                "source_cutoff": prediction.source_cutoff.isoformat(),
                 "result_status": "complete" if draw is not None else "pending",
+                "score": (
+                    f"{matched_count}/6" if matched_count is not None else "pending"
+                ),
                 "winning_numbers": (
                     list(draw.sorted_numbers) if draw is not None else None
                 ),
                 "matched_numbers": matched_numbers,
-                "matched_count": len(matched_numbers) if draw is not None else None,
+                "matched_count": matched_count,
+                "missed_predicted_numbers": (
+                    sorted(set(prediction.numbers) - set(draw.sorted_numbers))
+                    if draw is not None
+                    else None
+                ),
+                "unpredicted_winning_numbers": (
+                    sorted(set(draw.sorted_numbers) - set(prediction.numbers))
+                    if draw is not None
+                    else None
+                ),
+                "match_rate": (
+                    round(matched_count / 6, 6)
+                    if matched_count is not None
+                    else None
+                ),
+                "random_expected_matches": random_expected_matches,
+                "match_delta_vs_random": (
+                    round(matched_count - (36 / game.max_number), 6)
+                    if matched_count is not None
+                    else None
+                ),
             }
         )
     if not entries:
@@ -394,6 +425,7 @@ def _scorecard_payload(
             if pending_games
             else sum(int(entry["matched_count"] or 0) for entry in entries)
         ),
+        "performance": performance_summary(store, target_draw_date),
         "entries": entries,
     }
 
@@ -687,6 +719,7 @@ def run_backfill(context: RunContext) -> RunReport:
     except PcsoSourceError as error:
         return _source_error(context, "backfill", error)
     merge = store.merge_draws(records)
+    outcomes_written = store.score_completed_predictions(context.now)
     event_ids = list(_correction_event(context, "backfill", merge))
     event_ids.extend(
         _scorecard_events(
@@ -700,6 +733,7 @@ def run_backfill(context: RunContext) -> RunReport:
         "ok",
         True,
         merge,
+        outcomes_written=outcomes_written,
         event_ids=event_ids,
     )
 
@@ -966,6 +1000,7 @@ def run_audit(context: RunContext) -> RunReport:
     except PcsoSourceError as error:
         return _source_error(context, "audit", error)
     merge = store.merge_draws(records)
+    outcomes_written = store.score_completed_predictions(context.now)
     event_ids = list(_correction_event(context, "audit", merge))
     event_ids.extend(
         _scorecard_events(
@@ -1119,6 +1154,7 @@ def run_audit(context: RunContext) -> RunReport:
         "ok",
         True,
         merge,
+        outcomes_written=outcomes_written,
         event_ids=event_ids,
     )
 

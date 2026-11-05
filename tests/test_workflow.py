@@ -542,23 +542,47 @@ def test_morning_emits_pending_scorecard_for_previous_day_guess(
         for event in inspect_events(tmp_path, None)
         if event.kind == "daily_scorecard"
     ]
-    assert scorecard == {
-        "completed_games": 0,
-        "entries": [
-            {
-                "game_code": "LOTTO42",
-                "game_name": "Lotto 6/42",
-                "matched_count": None,
-                "matched_numbers": [],
-                "predicted_numbers": [1, 2, 3, 4, 5, 6],
-                "result_status": "pending",
-                "winning_numbers": None,
-            }
-        ],
-        "pending_games": 1,
-        "status": "pending",
-        "target_draw_date": "2026-10-27",
-        "total_matched_numbers": None,
+    assert scorecard["completed_games"] == 0
+    assert scorecard["pending_games"] == 1
+    assert scorecard["status"] == "pending"
+    assert scorecard["target_draw_date"] == "2026-10-27"
+    assert scorecard["total_matched_numbers"] is None
+    assert scorecard["entries"] == [
+        {
+            "game_code": "LOTTO42",
+            "game_name": "Lotto 6/42",
+            "match_delta_vs_random": None,
+            "match_rate": None,
+            "matched_count": None,
+            "matched_numbers": [],
+            "method_version": "ensemble_v1",
+            "missed_predicted_numbers": None,
+            "predicted_numbers": [1, 2, 3, 4, 5, 6],
+            "prediction_created_at": "2026-10-27T07:17:00+08:00",
+            "random_expected_matches": 0.857143,
+            "result_status": "pending",
+            "score": "pending",
+            "signal_score": 1.0,
+            "source_cutoff": "2026-10-27T07:17:00+08:00",
+            "unpredicted_winning_numbers": None,
+            "winning_numbers": None,
+        }
+    ]
+    assert scorecard["performance"]["lifetime"]["completed_lines"] == 0
+    assert (
+        scorecard["performance"]["last_7_days"]["average_matches_per_line"]
+        is None
+    )
+    assert (
+        scorecard["performance"]["last_30_days"]["match_delta_vs_random"]
+        is None
+    )
+    assert scorecard["performance"]["tuning_guardrail"] == {
+        "minimum_completed_lines": 30,
+        "completed_lines": 0,
+        "eligible_for_tuning_review": False,
+        "automatic_tuning": False,
+        "review_cycle": "weekly_walk_forward_audit",
     }
     assert len(events) == 1
     assert events[0].payload == scorecard
@@ -609,12 +633,50 @@ def test_later_result_replaces_pending_scorecard_with_match_comparison(
     assert scorecard["entries"][0] == {
         "game_code": "LOTTO42",
         "game_name": "Lotto 6/42",
+        "match_delta_vs_random": 2.142857,
+        "match_rate": 0.5,
         "matched_count": 3,
         "matched_numbers": [4, 5, 6],
+        "method_version": "ensemble_v1",
+        "missed_predicted_numbers": [1, 2, 3],
         "predicted_numbers": [1, 2, 3, 4, 5, 6],
+        "prediction_created_at": "2026-10-27T07:17:00+08:00",
+        "random_expected_matches": 0.857143,
         "result_status": "complete",
+        "score": "3/6",
+        "signal_score": 1.0,
+        "source_cutoff": "2026-10-27T07:17:00+08:00",
+        "unpredicted_winning_numbers": [7, 8, 9],
         "winning_numbers": [4, 5, 6, 7, 8, 9],
     }
+    assert scorecard["performance"]["lifetime"] == {
+        "completed_lines": 1,
+        "total_matches": 3,
+        "total_predicted_numbers": 6,
+        "average_matches_per_line": 3.0,
+        "match_rate": 0.5,
+        "random_expected_average": 0.857143,
+        "match_delta_vs_random": 2.142857,
+        "score_distribution": {
+            "0/6": 0,
+            "1/6": 0,
+            "2/6": 0,
+            "3/6": 1,
+            "4/6": 0,
+            "5/6": 0,
+            "6/6": 0,
+        },
+    }
+    assert (
+        scorecard["performance"]["last_7_days"]
+        == scorecard["performance"]["lifetime"]
+    )
+    assert (
+        scorecard["performance"]["last_30_days"]
+        == scorecard["performance"]["lifetime"]
+    )
+    assert scorecard["performance"]["tuning_guardrail"]["completed_lines"] == 1
+    assert scorecard["performance"]["tuning_guardrail"]["automatic_tuning"] is False
     assert [event.payload["status"] for event in events] == [
         "pending",
         "complete",
@@ -634,11 +696,18 @@ def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
     run_morning(context(tmp_path, FakePcso(latest=without_result)))
     delayed = draw("LOTTO42", target, offset=3)
 
-    run_backfill(
+    backfill = run_backfill(
         context(
             tmp_path,
             FakePcso(latest=without_result + (delayed,)),
             now=NOW + timedelta(hours=1),
+        )
+    )
+    duplicate_backfill = run_backfill(
+        context(
+            tmp_path,
+            FakePcso(latest=without_result + (delayed,)),
+            now=NOW + timedelta(hours=1, minutes=30),
         )
     )
     completed = json.loads(
@@ -663,8 +732,13 @@ def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
     ]
 
     assert completed["entries"][0]["winning_numbers"] == [4, 5, 6, 7, 8, 9]
+    assert backfill.outcomes_written == 1
+    assert duplicate_backfill.outcomes_written == 0
     assert audit.revised == 1
+    assert audit.outcomes_written == 1
     assert revised["entries"][0]["winning_numbers"] == [5, 6, 7, 8, 9, 10]
+    assert revised["entries"][0]["score"] == "2/6"
+    assert revised["performance"]["lifetime"]["total_matches"] == 2
     assert [event.payload["status"] for event in scorecard_events] == [
         "pending",
         "complete",
