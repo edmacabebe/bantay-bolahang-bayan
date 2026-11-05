@@ -227,7 +227,10 @@ def test_pending_and_source_error_attempts_record_heartbeats(
     )
     assert pending.status == "pending_source"
     assert pending_heartbeats["evening"]["status"] == "pending_source"
-    assert error_heartbeats["morning"]["status"] == "source_error"
+    assert (
+        error_heartbeats["morning"]["status"]
+        == "historical_fallback_source_error"
+    )
     assert error_heartbeats["evening"]["status"] == "source_error"
 
 
@@ -317,9 +320,63 @@ def test_morning_transport_failure_after_pending_evening_is_actionable(
         )
     )
 
-    assert morning.status == "source_error"
+    assert morning.status == "historical_fallback_source_error"
     assert len(morning.event_ids) == 1
     assert inspect_events(tmp_path, None)[0].kind == "action_required"
+
+
+def test_morning_source_error_generates_cached_historical_predictions(
+    tmp_path: Path,
+) -> None:
+    RepositoryStore(tmp_path).merge_draws(healthy_latest())
+    failing = FakePcso(fail=True)
+
+    first = run_morning(
+        context(
+            tmp_path,
+            failing,
+            eligible=True,
+            production=True,
+        )
+    )
+    prediction_bytes = {
+        code: (tmp_path / f"data/predictions/{code}.jsonl").read_bytes()
+        for code in ("GL55", "ML45")
+    }
+    duplicate = run_morning(
+        context(
+            tmp_path,
+            failing,
+            eligible=True,
+            production=True,
+            now=NOW + timedelta(hours=2),
+        )
+    )
+
+    decisions = json.loads((tmp_path / "state/gate_decisions.json").read_text())
+    heartbeat = json.loads(
+        (tmp_path / "state/heartbeats.json").read_text()
+    )["morning"]
+    events = inspect_events(tmp_path, None)
+    assert first.status == duplicate.status == "historical_fallback_source_error"
+    assert first.source_fresh is duplicate.source_fresh is False
+    assert first.prediction_games == ("GL55", "ML45")
+    assert first.predictions_written == 2
+    assert duplicate.predictions_written == 0
+    assert duplicate.event_ids == first.event_ids
+    assert {
+        code: (tmp_path / f"data/predictions/{code}.jsonl").read_bytes()
+        for code in ("GL55", "ML45")
+    } == prediction_bytes
+    assert decisions["historical_fallback"] is True
+    assert decisions["source_error"] is True
+    assert decisions["production_alerts_suppressed"] is True
+    assert heartbeat["status"] == "historical_fallback_source_error"
+    assert heartbeat["operational_date"] == "2026-10-28"
+    assert {event.kind for event in events} == {"action_required"}
+    assert all(event.kind != "research_signal" for event in events)
+    assert events[-1].payload["historical_combinations_generated"] is True
+    assert events[-1].payload["production_alerts_suppressed"] is True
 
 
 def test_first_collection_failure_is_silent_and_repeat_emits_once(

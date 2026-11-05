@@ -13,7 +13,7 @@ from .domain import DrawRecord
 from .games import GAMES
 
 
-DEFAULT_BASE_URL = "https://lottomatik.pcso.gov.ph/api/backend"
+DEFAULT_BASE_URL = "https://lottomatik-backend.api-lottomatik.workers.dev"
 USER_AGENT = "bantay-bolahang-bayan/0.1 (+https://github.com/edmacabebe/bantay-bolahang-bayan)"
 
 

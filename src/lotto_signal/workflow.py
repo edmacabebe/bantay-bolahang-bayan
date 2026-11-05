@@ -266,12 +266,13 @@ def _incident_id(kind: str, payload: dict[str, Any]) -> str:
     return f"{kind}-{_digest(payload)[:16]}"
 
 
-def _source_error(
-    context: RunContext, mode: str, error: PcsoSourceError
-) -> RunReport:
+def _source_incident(context: RunContext) -> tuple[bool, str]:
     previous = _previous_run(context.root)
-    previous_status = previous.get("status")
-    was_failed = previous_status in {"source_error", "pending_source"}
+    was_failed = previous.get("status") in {
+        "source_error",
+        "pending_source",
+        "historical_fallback_source_error",
+    }
     incident_started_at = (
         str(
             previous.get("incident_started_at")
@@ -281,6 +282,13 @@ def _source_error(
         if was_failed
         else context.now.isoformat()
     )
+    return was_failed, incident_started_at
+
+
+def _source_error(
+    context: RunContext, mode: str, error: PcsoSourceError
+) -> RunReport:
+    was_failed, incident_started_at = _source_incident(context)
     event_ids: list[str] = []
     if was_failed:
         identity = {"incident_started_at": incident_started_at}
@@ -742,10 +750,14 @@ def run_evening(context: RunContext) -> RunReport:
 
 def run_morning(context: RunContext) -> RunReport:
     store = RepositoryStore(context.root)
+    collection_error: PcsoSourceError | None = None
+    incident_started_at: str | None = None
     try:
         records = context.pcso.fetch_latest(context.now)
     except PcsoSourceError as error:
-        return _source_error(context, "morning", error)
+        records = ()
+        collection_error = error
+        _, incident_started_at = _source_incident(context)
     merge = store.merge_draws(records)
     outcomes_written = store.score_completed_predictions(context.now)
     event_ids = list(_correction_event(context, "morning", merge))
@@ -753,16 +765,29 @@ def run_morning(context: RunContext) -> RunReport:
     historical_fallback = bool(missing_expected)
     if historical_fallback:
         payload = {
-            "reason": "required prior scheduled PCSO result is missing",
+            "reason": (
+                "PCSO collection failed after retry; using latest verified history"
+                if collection_error is not None
+                else "required prior scheduled PCSO result is missing"
+            ),
             "games": list(missing_expected),
             "draw_date": (context.now.date() - timedelta(days=1)).isoformat(),
             "historical_combinations_generated": True,
             "production_alerts_suppressed": True,
         }
+        if incident_started_at is not None:
+            payload["incident_started_at"] = incident_started_at
         event_ids.append(
             _event(
                 context,
-                _incident_id("stale-source", payload),
+                _incident_id(
+                    (
+                        "source-error-fallback"
+                        if collection_error is not None
+                        else "stale-source"
+                    ),
+                    payload,
+                ),
                 "action_required",
                 payload,
             )
@@ -889,6 +914,7 @@ def run_morning(context: RunContext) -> RunReport:
             ),
             "shadow_started_on": runtime.shadow_started_on.isoformat(),
             "historical_fallback": historical_fallback,
+            "source_error": collection_error is not None,
             "missing_expected_games": list(missing_expected),
             "production_alerts_suppressed": historical_fallback,
             "decisions": decisions,
@@ -907,13 +933,20 @@ def run_morning(context: RunContext) -> RunReport:
     return _finish(
         context,
         "morning",
-        "historical_fallback" if historical_fallback else "ok",
+        (
+            "historical_fallback_source_error"
+            if collection_error is not None
+            else "historical_fallback"
+            if historical_fallback
+            else "ok"
+        ),
         not historical_fallback,
         merge,
         predictions_written=predictions_written,
         outcomes_written=outcomes_written,
         prediction_games=prediction_games,
         event_ids=event_ids,
+        incident_started_at=incident_started_at,
     )
 
 
