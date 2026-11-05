@@ -240,6 +240,24 @@ class RepositoryStore:
                 return _prediction_from_dict(row)
         return None
 
+    def load_predictions(self, game_code: str) -> tuple[Prediction, ...]:
+        if game_code not in GAMES:
+            raise ValueError(f"unknown game: {game_code}")
+        predictions = tuple(
+            _prediction_from_dict(row)
+            for row in _read_jsonl(self._prediction_path(game_code))
+        )
+        return tuple(
+            sorted(
+                predictions,
+                key=lambda item: (
+                    item.target_draw_date,
+                    item.created_at,
+                    item.prediction_id,
+                ),
+            )
+        )
+
     def load_prediction_for_target(
         self, game_code: str, target_draw_date: date
     ) -> Prediction | None:

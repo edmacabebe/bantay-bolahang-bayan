@@ -190,6 +190,28 @@ def test_only_one_primary_prediction_is_allowed_per_game_and_draw(
         store.append_prediction(alternate_method)
 
 
+def test_load_predictions_returns_typed_chronological_rows(
+    tmp_path: Path,
+) -> None:
+    store = RepositoryStore(tmp_path)
+    later = prediction()
+    earlier = replace(
+        later,
+        prediction_id="LOTTO42-2026-10-20-ensemble_v1",
+        target_draw_date=date(2026, 10, 20),
+        created_at=datetime(2026, 10, 20, 0, tzinfo=timezone.utc),
+    )
+    store.append_prediction(later)
+    store.append_prediction(earlier)
+
+    loaded = store.load_predictions("LOTTO42")
+
+    assert loaded == (earlier, later)
+    assert all(isinstance(item, Prediction) for item in loaded)
+    with pytest.raises(ValueError, match="unknown game"):
+        store.load_predictions("UNKNOWN")
+
+
 def test_event_id_is_written_once_and_latest_is_replaced_atomically(
     tmp_path: Path,
 ) -> None:
