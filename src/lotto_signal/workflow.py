@@ -286,24 +286,28 @@ def _source_incident(context: RunContext) -> tuple[bool, str]:
     return was_failed, incident_started_at
 
 
+def _source_failure_event(
+    context: RunContext, incident_started_at: str
+) -> str:
+    identity = {"incident_started_at": incident_started_at}
+    return _event(
+        context,
+        _incident_id("source-error", identity),
+        "action_required",
+        {
+            "reason": "PCSO collection failed after retry",
+            "incident_started_at": incident_started_at,
+        },
+    )
+
+
 def _source_error(
     context: RunContext, mode: str, error: PcsoSourceError
 ) -> RunReport:
     was_failed, incident_started_at = _source_incident(context)
     event_ids: list[str] = []
     if was_failed:
-        identity = {"incident_started_at": incident_started_at}
-        event_ids.append(
-            _event(
-                context,
-                _incident_id("source-error", identity),
-                "action_required",
-                {
-                    "reason": "PCSO collection failed after retry",
-                    "incident_started_at": incident_started_at,
-                },
-            )
-        )
+        event_ids.append(_source_failure_event(context, incident_started_at))
     return _finish(
         context,
         mode,
@@ -436,6 +440,11 @@ def _scorecard_dates(
     daily_target: date | None,
 ) -> tuple[date, ...]:
     targets = {daily_target} if daily_target is not None else set()
+    for path in (store.root / "state" / "scorecards").glob("*.json"):
+        try:
+            targets.add(date.fromisoformat(path.stem))
+        except ValueError:
+            continue
     for record in records:
         if store.load_prediction_for_target(record.game_code, record.draw_date):
             targets.add(record.draw_date)
@@ -759,17 +768,9 @@ def run_evening(context: RunContext) -> RunReport:
         )
     )
     source_fresh = not _missing_games_for_day(records, evening_date)
-    previous = _previous_run(context.root)
     incident_started_at = None
     if not source_fresh:
-        incident_started_at = (
-            str(
-                previous.get("incident_started_at")
-                or previous.get("started_at")
-            )
-            if previous.get("status") in {"pending_source", "source_error"}
-            else context.now.isoformat()
-        )
+        _, incident_started_at = _source_incident(context)
     return _finish(
         context,
         "evening",
@@ -785,47 +786,41 @@ def run_evening(context: RunContext) -> RunReport:
 def run_morning(context: RunContext) -> RunReport:
     store = RepositoryStore(context.root)
     collection_error: PcsoSourceError | None = None
+    collection_was_failed = False
     incident_started_at: str | None = None
     try:
         records = context.pcso.fetch_latest(context.now)
     except PcsoSourceError as error:
         records = ()
         collection_error = error
-        _, incident_started_at = _source_incident(context)
+        collection_was_failed, incident_started_at = _source_incident(context)
     merge = store.merge_draws(records)
     outcomes_written = store.score_completed_predictions(context.now)
     event_ids = list(_correction_event(context, "morning", merge))
     missing_expected = _missing_expected_games(records, context.now)
     historical_fallback = bool(missing_expected)
     if historical_fallback:
-        payload = {
-            "reason": (
-                "PCSO collection failed after retry; using latest verified history"
-                if collection_error is not None
-                else "required prior scheduled PCSO result is missing"
-            ),
-            "games": list(missing_expected),
-            "draw_date": (context.now.date() - timedelta(days=1)).isoformat(),
-            "historical_combinations_generated": True,
-            "production_alerts_suppressed": True,
-        }
-        if incident_started_at is not None:
-            payload["incident_started_at"] = incident_started_at
-        event_ids.append(
-            _event(
-                context,
-                _incident_id(
-                    (
-                        "source-error-fallback"
-                        if collection_error is not None
-                        else "stale-source"
-                    ),
+        if collection_error is not None:
+            if collection_was_failed and incident_started_at is not None:
+                event_ids.append(
+                    _source_failure_event(context, incident_started_at)
+                )
+        else:
+            payload = {
+                "reason": "required prior scheduled PCSO result is missing",
+                "games": list(missing_expected),
+                "draw_date": (context.now.date() - timedelta(days=1)).isoformat(),
+                "historical_combinations_generated": True,
+                "production_alerts_suppressed": True,
+            }
+            event_ids.append(
+                _event(
+                    context,
+                    _incident_id("stale-source", payload),
+                    "action_required",
                     payload,
-                ),
-                "action_required",
-                payload,
+                )
             )
-        )
 
     runtime = _runtime(context)
     predictions_written = 0

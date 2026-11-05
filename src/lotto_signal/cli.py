@@ -28,6 +28,7 @@ HANDLED_STATUSES = frozenset(
         "stale_source",
         "source_error",
         "historical_fallback",
+        "historical_fallback_source_error",
     }
 )
 

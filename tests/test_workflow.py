@@ -294,6 +294,19 @@ def test_pending_source_retries_preserve_first_incident_time(tmp_path: Path) -> 
     assert state["incident_started_at"] == evening.isoformat()
 
 
+def test_evening_pending_preserves_morning_source_incident_time(
+    tmp_path: Path,
+) -> None:
+    evening = NOW.replace(hour=22, minute=17)
+
+    run_morning(context(tmp_path, FakePcso(fail=True), now=NOW))
+    run_evening(context(tmp_path, FakePcso(latest=()), now=evening))
+
+    state = json.loads((tmp_path / "state/last_run.json").read_text())
+    assert state["status"] == "pending_source"
+    assert state["incident_started_at"] == NOW.isoformat()
+
+
 def test_first_source_failure_starts_at_failure_not_previous_success(
     tmp_path: Path,
 ) -> None:
@@ -363,7 +376,8 @@ def test_morning_source_error_generates_cached_historical_predictions(
     assert first.prediction_games == ("GL55", "ML45")
     assert first.predictions_written == 2
     assert duplicate.predictions_written == 0
-    assert duplicate.event_ids == first.event_ids
+    assert first.event_ids == ()
+    assert len(duplicate.event_ids) == 1
     assert {
         code: (tmp_path / f"data/predictions/{code}.jsonl").read_bytes()
         for code in ("GL55", "ML45")
@@ -375,8 +389,29 @@ def test_morning_source_error_generates_cached_historical_predictions(
     assert heartbeat["operational_date"] == "2026-10-28"
     assert {event.kind for event in events} == {"action_required"}
     assert all(event.kind != "research_signal" for event in events)
-    assert events[-1].payload["historical_combinations_generated"] is True
-    assert events[-1].payload["production_alerts_suppressed"] is True
+    assert events[-1].payload["reason"] == "PCSO collection failed after retry"
+    assert events[-1].payload["incident_started_at"] == NOW.isoformat()
+
+
+def test_continuous_cross_mode_source_outage_emits_one_escalation(
+    tmp_path: Path,
+) -> None:
+    failing = FakePcso(fail=True)
+    evening = NOW.replace(hour=22, minute=17)
+
+    first = run_morning(context(tmp_path, failing, now=NOW))
+    second = run_evening(context(tmp_path, failing, now=evening))
+    third = run_morning(
+        context(tmp_path, failing, now=NOW + timedelta(days=1))
+    )
+
+    events = inspect_events(tmp_path, None)
+    action_events = [event for event in events if event.kind == "action_required"]
+    assert first.event_ids == ()
+    assert len(second.event_ids) == 1
+    assert second.event_ids[0] in third.event_ids
+    assert len(action_events) == 1
+    assert action_events[0].payload["incident_started_at"] == NOW.isoformat()
 
 
 def test_first_collection_failure_is_silent_and_repeat_emits_once(
@@ -744,6 +779,39 @@ def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
         "complete",
         "complete",
     ]
+
+
+def test_older_correction_refreshes_newer_pending_scorecard_summary(
+    tmp_path: Path,
+) -> None:
+    older = NOW.date() - timedelta(days=4)
+    newer = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", older)
+    append_prediction(tmp_path, "LOTTO42", newer)
+    original = draw("LOTTO42", older)
+
+    run_backfill(context(tmp_path, FakePcso(latest=(original,))))
+    run_morning(context(tmp_path, FakePcso(latest=(original,))))
+    before = json.loads(
+        (tmp_path / f"state/scorecards/{newer.isoformat()}.json").read_text()
+    )
+
+    corrected = draw("LOTTO42", older, offset=5)
+    run_backfill(
+        context(
+            tmp_path,
+            FakePcso(latest=(corrected,)),
+            now=NOW + timedelta(hours=1),
+        )
+    )
+
+    after = json.loads(
+        (tmp_path / f"state/scorecards/{newer.isoformat()}.json").read_text()
+    )
+    latest = json.loads((tmp_path / "state/daily_scorecard.json").read_text())
+    assert before["performance"]["lifetime"]["total_matches"] == 6
+    assert after["performance"]["lifetime"]["total_matches"] == 1
+    assert latest["target_draw_date"] == newer.isoformat()
 
 
 def test_duplicate_morning_is_idempotent_and_predictions_are_immutable(
