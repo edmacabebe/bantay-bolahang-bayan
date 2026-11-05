@@ -75,6 +75,30 @@ def test_prompt_reports_daily_scorecards_including_pending_results() -> None:
     assert "n/6" in text
 
 
+def test_prompt_timestamps_and_reports_evidence_first_metrics() -> None:
+    text = prompt_text().lower()
+
+    assert "report timestamp:" in text
+    assert "created_at" in text
+    assert "asia/manila" in text
+    for field in (
+        "score",
+        "matched_numbers",
+        "missed_predicted_numbers",
+        "unpredicted_winning_numbers",
+        "source_cutoff",
+        "last_7_days",
+        "last_30_days",
+        "lifetime",
+        "random_expected_average",
+        "match_delta_vs_random",
+        "automatic_tuning",
+        "weekly_walk_forward_audit",
+    ):
+        assert field in text
+    assert "do not automatically tune" in text
+
+
 def test_prompt_forbids_external_notification_channels() -> None:
     text = prompt_text().lower()
 
@@ -105,5 +129,12 @@ def test_operations_guide_covers_lifecycle_incidents_and_cost_ceiling() -> None:
         "9:07 am",
         "11:07 pm",
         "12:07 am",
+        "lottomatik-backend.api-lottomatik.workers.dev",
+        "historical_fallback_source_error",
+        "report timestamp",
+        "7-day",
+        "30-day",
+        "random baseline",
+        "weekly walk-forward audit",
     ):
         assert phrase in text

@@ -26,7 +26,9 @@ For manual recovery, inspect `state/heartbeats.json` and `state/last_run.json` f
 
 ## Source and schema incidents
 
-The first official-source failure stays silent. A repeated failure creates an `action_required` event. If the PCSO JSON schema changes, do not overwrite history or loosen validation to force the run through. Preserve the response safely outside committed state, update a sanitized fixture and parser test, then release the parser fix.
+The active official-results endpoint is `https://lottomatik-backend.api-lottomatik.workers.dev/get-results`. The former `lottomatik.pcso.gov.ph/api/backend/get-results` proxy began returning HTTP 404 in November 2026. Keep strict schema and game-code validation when changing endpoints; a successful HTTP response alone is not proof that the payload is valid official data.
+
+The first official-source failure stays silent. A repeated failure creates an `action_required` event. A morning source failure uses status `historical_fallback_source_error`: the runner preserves the incident timestamp, generates the scheduled games from the latest locally verified history, and suppresses production research signals. Evening collection does not invent a result and retains its source-error behavior. If the PCSO JSON schema changes, do not overwrite history or loosen validation to force the run through. Preserve the response safely outside committed state, update a sanitized fixture and parser test, then release the parser fix.
 
 An official correction is appended under `data/revisions/`; originals are never rewritten. Run `audit` after an official correction and review whether predictions, backtest outcomes, or a gate decision changed.
 
@@ -37,6 +39,12 @@ An official correction is appended under `data/revisions/`; originals are never 
 When prior scheduled results are missing, the morning run uses `historical_fallback`: it still persists the day's scheduled-game combinations from the latest verified history, records the missing games, and suppresses every production research alert. Present such a combination only as a **historical-data guess**, never as high probability. Jackpot odds remain unchanged.
 
 Each collection run also refreshes deterministic daily scorecards under `state/scorecards/` and publishes the latest one at `state/daily_scorecard.json`. The morning scorecard covers the previous Manila calendar day. A missing official result is reported as pending instead of being treated as zero matches. When a later run receives the result, it emits a completed `daily_scorecard` with predicted numbers, winning numbers, matched numbers, and the matched-ball count out of six. Corrected official results produce a new scorecard version through their changed content.
+
+Every Codex notification begins with `Report timestamp` and converts the event's recorded time to `Asia/Manila`. A completed line reports its score as `n/6`, the exact matched numbers, missed predicted numbers, unpredicted winning numbers, method version, signal score, and source cutoff. This overlap is not a prize determination, and reporting it does not change the underlying jackpot odds.
+
+The scorecard also reports 7-day, 30-day, and lifetime performance: completed lines, total and average matches, the complete 0/6 through 6/6 distribution, and the delta from the line-weighted random baseline. Pending draws are excluded. Corrected draws replace the active outcome rather than being counted twice.
+
+Daily outcomes never trigger automatic algorithm changes. The tuning guardrail requires the configured minimum sample and a weekly walk-forward audit before a candidate method can be considered. This avoids tuning to a handful of recent random outcomes; promotion remains an explicit, evidence-based decision.
 
 To pause collection, disable the GitHub workflow. To resume, enable it and run `morning`, then `audit`, manually. To pause the Codex monitor, use its control in the Scheduled tab; resume it only after the repository heartbeat is current.
 
