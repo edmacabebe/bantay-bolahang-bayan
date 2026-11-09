@@ -40,7 +40,9 @@ When prior scheduled results are missing, the morning run uses `historical_fallb
 
 Each collection run also refreshes deterministic daily scorecards under `state/scorecards/` and publishes the latest one at `state/daily_scorecard.json`. The morning scorecard covers the previous Manila calendar day. A missing official result is reported as pending instead of being treated as zero matches. When a later run receives the result, it emits a completed `daily_scorecard` with predicted numbers, winning numbers, matched numbers, and the matched-ball count out of six. Corrected official results produce a new scorecard version through their changed content.
 
-Every Codex notification begins with `Report timestamp` and converts the event's recorded time to `Asia/Manila`. A completed line reports its score as `n/6`, the exact matched numbers, missed predicted numbers, unpredicted winning numbers, method version, signal score, and source cutoff. This overlap is not a prize determination, and reporting it does not change the underlying jackpot odds.
+Every score remains in GitHub, but ordinary scorecards do not create a Codex message. Pending results and completed 0/6 and 1/6 lines stay silent. When at least one completed line reaches 2/6, the workflow emits one content-addressed `significant_score` event containing all qualifying games for that target date. Unchanged replay reuses the same event ID, while an official correction that changes qualifying content creates a new auditable version.
+
+Every Codex notification begins with `Report timestamp` and converts the event's recorded time to `Asia/Manila`. A `significant_score` report shows each qualifying line's score as `n/6`, the exact matched numbers, missed predicted numbers, unpredicted winning numbers, method version, signal score, and source cutoff. This overlap is not a prize determination, and reporting it does not change the underlying jackpot odds.
 
 The scorecard also reports 7-day, 30-day, and lifetime performance: completed lines, total and average matches, the complete 0/6 through 6/6 distribution, and the delta from the line-weighted random baseline. Pending draws are excluded. Corrected draws replace the active outcome rather than being counted twice.
 
@@ -50,6 +52,6 @@ To pause collection, disable the GitHub workflow. To resume, enable it and run `
 
 ## Cost controls
 
-Public GitHub Actions is intended to keep the deterministic runner at no charge under the public-repository allowance. The Codex monitor prefers GPT-6 Luna at low reasoning when available, stays silent on unchanged state, and has a hard recurring budget policy of $5 per calendar month. Model availability, plan allowances, and prices can change, so check the account's actual usage before production enablement.
+Public GitHub Actions is intended to keep the deterministic runner at no charge under the public-repository allowance. The Codex monitor prefers GPT-6 Luna at low reasoning when available, stays silent on unchanged state and scores below 2/6, and has a hard recurring budget policy of $5 per calendar month. The significant-score threshold does not add polling runs; it only changes whether an existing check produces a short report. Model availability, plan allowances, and prices can change, so check the account's actual usage before production enablement.
 
 At 80% of the $5 ceiling, disable optional interpretation. At 100%, pause optional cost-incurring tasks and retain only deterministic GitHub processing until the next calendar month or an explicit operator decision.

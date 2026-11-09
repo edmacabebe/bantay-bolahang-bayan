@@ -65,14 +65,22 @@ def test_prompt_labels_historical_fallback_without_probability_claims() -> None:
     assert "production alerts were suppressed" in text
 
 
-def test_prompt_reports_daily_scorecards_including_pending_results() -> None:
+def test_prompt_notifies_only_for_significant_scores() -> None:
     text = prompt_text().lower()
 
     assert "daily_scorecard" in text
-    assert "pending official result" in text
+    assert "significant_score" in text
+    assert "threshold" in text and "2" in text
+    assert "advance" in text and "cursor" in text
+    assert "pending" in text and "remain silent" in text
+    assert "0/6" in text and "1/6" in text and "remain silent" in text
+    assert "qualifying_entries" in text
+    assert "predicted" in text and "winning" in text
     assert "matched_numbers" in text
     assert "matched_count" in text
     assert "n/6" in text
+    assert "not a prize" in text
+    assert "jackpot odds" in text
 
 
 def test_prompt_timestamps_and_reports_evidence_first_metrics() -> None:
@@ -136,5 +144,9 @@ def test_operations_guide_covers_lifecycle_incidents_and_cost_ceiling() -> None:
         "30-day",
         "random baseline",
         "weekly walk-forward audit",
+        "significant_score",
+        "2/6",
+        "0/6 and 1/6",
+        "content-addressed",
     ):
         assert phrase in text
