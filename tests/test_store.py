@@ -260,6 +260,34 @@ def test_event_retry_ignores_timestamp_but_rejects_changed_meaning(
         )
 
 
+def test_latest_event_pointer_matches_final_ordered_event(tmp_path: Path) -> None:
+    store = RepositoryStore(tmp_path)
+    created_at = datetime(2026, 10, 28, 1, tzinfo=timezone.utc)
+    ordered_last = MonitorEvent(
+        event_id="significant-score-z",
+        kind="significant_score",
+        created_at=created_at,
+        payload={"score": "2/6"},
+    )
+    inserted_last = MonitorEvent(
+        event_id="daily-scorecard-a",
+        kind="daily_scorecard",
+        created_at=created_at,
+        payload={"score": "1/6"},
+    )
+
+    store.write_event(ordered_last)
+    store.write_event(inserted_last)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "alerts/events.jsonl").read_text().splitlines()
+    ]
+    latest = json.loads((tmp_path / "alerts/latest.json").read_text())
+    assert rows[-1]["event_id"] == "significant-score-z"
+    assert latest == rows[-1]
+
+
 def test_sqlite_cache_matches_corrected_projection(tmp_path: Path) -> None:
     store = RepositoryStore(tmp_path)
     original = draw("LOTTO42S0001", date(2026, 10, 13), (1, 2, 3, 4, 5, 6))

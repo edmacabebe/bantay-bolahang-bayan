@@ -193,6 +193,24 @@ class RepositoryStore:
             ]
         return tuple(records)
 
+    def draw_version(self, game_code: str, draw_id: str) -> str:
+        if game_code not in GAMES:
+            raise ValueError(f"unknown game: {game_code}")
+        originals = {
+            row["draw_id"]: row for row in _read_jsonl(self._draw_path(game_code))
+        }
+        original = originals.get(draw_id)
+        if original is None:
+            raise ValueError(f"unknown draw: {game_code} {draw_id}")
+        revisions = [
+            row
+            for row in _read_jsonl(self._revision_path(game_code))
+            if row["draw_id"] == draw_id
+        ]
+        if revisions:
+            return str(revisions[-1]["revision_id"])
+        return f"{draw_id}:original:{original['fingerprint']}"
+
     def append_prediction(self, prediction: Prediction) -> bool:
         path = self._prediction_path(prediction.game_code)
         rows = _read_jsonl(path)
@@ -341,8 +359,17 @@ class RepositoryStore:
         rows.append(rendered)
         rows.sort(key=lambda row: (row["created_at"], row["event_id"]))
         _write_jsonl(events_path, rows)
-        _atomic_write(self.root / "alerts" / "latest.json", f"{_canonical(rendered)}\n")
+        _atomic_write(
+            self.root / "alerts" / "latest.json",
+            f"{_canonical(rows[-1])}\n",
+        )
         return True
+
+    def event_exists(self, event_id: str) -> bool:
+        return any(
+            row["event_id"] == event_id
+            for row in _read_jsonl(self.root / "alerts" / "events.jsonl")
+        )
 
     def build_sqlite(self, path: Path) -> None:
         path = Path(path)

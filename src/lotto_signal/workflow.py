@@ -478,12 +478,23 @@ def _scorecard_events(
                 payload,
             )
         )
-        qualifying_entries = [
-            entry
-            for entry in payload["entries"]
-            if entry["result_status"] == "complete"
-            and int(entry["matched_count"]) >= 2
-        ]
+        qualifying_entries: list[dict[str, Any]] = []
+        for entry in payload["entries"]:
+            if (
+                entry["result_status"] != "complete"
+                or int(entry["matched_count"]) < 2
+            ):
+                continue
+            draw = next(
+                record
+                for record in store.load_draws(str(entry["game_code"]))
+                if record.draw_date == target_draw_date
+            )
+            qualifying_entry = dict(entry)
+            qualifying_entry["result_version"] = store.draw_version(
+                draw.game_code, draw.draw_id
+            )
+            qualifying_entries.append(qualifying_entry)
         if qualifying_entries:
             significant_payload = {
                 "threshold": 2,
@@ -495,10 +506,18 @@ def _scorecard_events(
                     "predictive edge, or determine prize eligibility."
                 ),
             }
+            identity = {
+                "threshold": 2,
+                "target_draw_date": payload["target_draw_date"],
+                "qualifying_entries": qualifying_entries,
+            }
+            event_id = _incident_id("significant-score", identity)
             event_ids.append(
-                _event(
+                event_id
+                if store.event_exists(event_id)
+                else _event(
                     context,
-                    _incident_id("significant-score", significant_payload),
+                    event_id,
                     "significant_score",
                     significant_payload,
                 )

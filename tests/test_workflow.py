@@ -818,6 +818,91 @@ def test_official_correction_crossing_threshold_emits_significant_score(
     assert alerts[0].payload["qualifying_entries"][0]["matched_numbers"] == [5, 6]
 
 
+def test_unrelated_correction_does_not_repeat_unchanged_significant_score(
+    tmp_path: Path,
+) -> None:
+    older = NOW.date() - timedelta(days=4)
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", older)
+    append_prediction(tmp_path, "LOTTO42", target)
+    older_one_match = draw("LOTTO42", older, offset=5)
+    target_two_matches = draw("LOTTO42", target, suffix=2, offset=4)
+
+    run_backfill(
+        context(
+            tmp_path,
+            FakePcso(latest=(older_one_match, target_two_matches)),
+        )
+    )
+    older_zero_matches = draw("LOTTO42", older, offset=6)
+    run_backfill(
+        context(
+            tmp_path,
+            FakePcso(latest=(older_zero_matches, target_two_matches)),
+            now=NOW + timedelta(hours=1),
+        )
+    )
+
+    alerts = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "significant_score"
+        and event.payload["target_draw_date"] == target.isoformat()
+    ]
+    assert len(alerts) == 1
+    assert alerts[0].payload["performance"]["lifetime"]["total_matches"] == 3
+
+
+def test_restored_qualifying_result_emits_new_version_once(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    qualifying = draw("LOTTO42", target, offset=4)
+    below_threshold = draw("LOTTO42", target, offset=5)
+    evening = NOW.replace(hour=22, minute=17)
+
+    run_evening(
+        context(tmp_path, FakePcso(latest=(qualifying,)), now=evening)
+    )
+    run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=(below_threshold,)),
+            now=evening + timedelta(hours=1),
+        )
+    )
+    run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=(qualifying,)),
+            now=evening + timedelta(hours=2),
+        )
+    )
+    run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=(qualifying,)),
+            now=evening + timedelta(hours=3),
+        )
+    )
+
+    alerts = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "significant_score"
+    ]
+    assert len(alerts) == 2
+    assert len({event.event_id for event in alerts}) == 2
+    assert [
+        event.payload["qualifying_entries"][0]["score"] for event in alerts
+    ] == ["2/6", "2/6"]
+    assert (
+        alerts[0].payload["qualifying_entries"][0]["result_version"]
+        != alerts[1].payload["qualifying_entries"][0]["result_version"]
+    )
+
+
 def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
     tmp_path: Path,
 ) -> None:
