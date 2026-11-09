@@ -718,6 +718,106 @@ def test_later_result_replaces_pending_scorecard_with_match_comparison(
     ]
 
 
+def test_one_match_scorecard_does_not_emit_significant_score(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    one_match = draw("LOTTO42", target, offset=5)
+
+    run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=(one_match,)),
+            now=NOW.replace(hour=22, minute=17),
+        )
+    )
+
+    assert all(
+        event.kind != "significant_score"
+        for event in inspect_events(tmp_path, None)
+    )
+
+
+def test_two_match_games_emit_one_idempotent_significant_score(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    append_prediction(tmp_path, "SL49", target)
+    results = (
+        draw("LOTTO42", target, offset=4),
+        draw("SL49", target, offset=4),
+    )
+    first_at = NOW.replace(hour=22, minute=17)
+
+    first = run_evening(
+        context(tmp_path, FakePcso(latest=results), now=first_at)
+    )
+    duplicate = run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=results),
+            now=first_at + timedelta(hours=1),
+        )
+    )
+
+    alerts = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "significant_score"
+    ]
+    assert len(alerts) == 1
+    assert alerts[0].event_id in first.event_ids
+    assert alerts[0].event_id in duplicate.event_ids
+    assert alerts[0].payload["threshold"] == 2
+    assert alerts[0].payload["target_draw_date"] == target.isoformat()
+    assert [
+        (entry["game_code"], entry["score"], entry["matched_numbers"])
+        for entry in alerts[0].payload["qualifying_entries"]
+    ] == [
+        ("LOTTO42", "2/6", [5, 6]),
+        ("SL49", "2/6", [5, 6]),
+    ]
+    assert alerts[0].payload["performance"]["lifetime"]["completed_lines"] == 2
+    assert "jackpot odds" in alerts[0].payload["disclaimer"].lower()
+
+
+def test_official_correction_crossing_threshold_emits_significant_score(
+    tmp_path: Path,
+) -> None:
+    target = NOW.date() - timedelta(days=1)
+    append_prediction(tmp_path, "LOTTO42", target)
+    original = draw("LOTTO42", target, offset=5)
+    evening = NOW.replace(hour=22, minute=17)
+
+    run_evening(
+        context(tmp_path, FakePcso(latest=(original,)), now=evening)
+    )
+    assert all(
+        event.kind != "significant_score"
+        for event in inspect_events(tmp_path, None)
+    )
+
+    corrected = draw("LOTTO42", target, offset=4)
+    run_evening(
+        context(
+            tmp_path,
+            FakePcso(latest=(corrected,)),
+            now=evening + timedelta(hours=1),
+        )
+    )
+
+    alerts = [
+        event
+        for event in inspect_events(tmp_path, None)
+        if event.kind == "significant_score"
+    ]
+    assert len(alerts) == 1
+    assert alerts[0].payload["qualifying_entries"][0]["score"] == "2/6"
+    assert alerts[0].payload["qualifying_entries"][0]["matched_numbers"] == [5, 6]
+
+
 def test_backfill_and_audit_refresh_delayed_and_corrected_scorecards(
     tmp_path: Path,
 ) -> None:

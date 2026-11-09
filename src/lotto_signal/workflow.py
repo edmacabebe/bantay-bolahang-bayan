@@ -478,6 +478,31 @@ def _scorecard_events(
                 payload,
             )
         )
+        qualifying_entries = [
+            entry
+            for entry in payload["entries"]
+            if entry["result_status"] == "complete"
+            and int(entry["matched_count"]) >= 2
+        ]
+        if qualifying_entries:
+            significant_payload = {
+                "threshold": 2,
+                "target_draw_date": payload["target_draw_date"],
+                "qualifying_entries": qualifying_entries,
+                "performance": payload["performance"],
+                "disclaimer": (
+                    "Number overlap does not change jackpot odds, prove a "
+                    "predictive edge, or determine prize eligibility."
+                ),
+            }
+            event_ids.append(
+                _event(
+                    context,
+                    _incident_id("significant-score", significant_payload),
+                    "significant_score",
+                    significant_payload,
+                )
+            )
     if payloads:
         _atomic_json(
             context.root / "state" / "daily_scorecard.json",
